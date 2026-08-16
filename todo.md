@@ -10,12 +10,17 @@
 - [x] Add a model/labels asset contract and setup documentation for a compatible TFLite model.
 - [x] Generate a branded mobile icon and update the managed project branding configuration.
 - [x] Run static checks and review the Android project configuration for integration issues.
-- [ ] Create a private GitHub repository and push the completed source code.
+- [x] Create a private GitHub repository and push the completed source code.
 
 - [x] Regenerate a lower-size launcher icon and replace the oversized branding assets.
 - [x] Re-run checkpoint save after the optimized icon replacement.
-- [ ] Push the checkpointed project to a private GitHub repository.
+- [x] Push the checkpointed project to a private GitHub repository.
 
 ## Change history
 
-- [ ] User requested a smaller regenerated icon because checkpoint validation rejected the previous 2.5 MB PNG files.
+- [x] User requested a smaller regenerated icon because checkpoint validation rejected the previous 2.5 MB PNG files.
+
+- [x] Diagnose the reported LiteRT and TensorFlow Lite duplicate-class build conflict.
+- [x] Align inference dependencies to a single runtime and update affected Kotlin imports.
+- [x] Run dependency, Gradle, and unit-test validation after the inference-runtime fix.
+- [ ] Push the verified duplicate-class resolution to the private repository's main branch.

@@ -95,9 +95,11 @@ class SpatialFusionEngine(
     ): Pair<Int, Int>? {
         val source = floatArrayOf(box.centerX(), box.centerY())
         val target = FloatArray(2)
-        frame.transformCoordinates2d(Coordinates2d.VIEW, source, Coordinates2d.DEPTH_IMAGE_PIXELS, target)
-        val x = target[0].roundToInt()
-        val y = target[1].roundToInt()
+        frame.transformCoordinates2d(Coordinates2d.VIEW, source, Coordinates2d.IMAGE_PIXELS, target)
+        val cameraDimensions = frame.camera.imageIntrinsics.imageDimensions
+        if (cameraDimensions[0] <= 0 || cameraDimensions[1] <= 0) return null
+        val x = (target[0] * depthImage.width / cameraDimensions[0]).roundToInt()
+        val y = (target[1] * depthImage.height / cameraDimensions[1]).roundToInt()
         return if (x in 0 until depthImage.width && y in 0 until depthImage.height) x to y else null
     }
 

@@ -23,9 +23,20 @@ Open this directory in Android Studio, allow Gradle synchronization, connect a s
 
 The `GPU` metric intentionally reports `N/A` unless a device-specific profiler is added: Android exposes no reliable, portable public API for percentage GPU load. CPU is process-time based, while FPS is rendered-frame based.
 
+### Inference runtime dependency policy
+
+The module deliberately keeps only `org.tensorflow:tensorflow-lite:2.17.0`. That artifact bridges to LiteRT 1.0.1; adding `tensorflow-lite-support:0.4.4` also pulls legacy `tensorflow-lite-api:2.13.0`, which collides with LiteRT's compatibility classes at build time. The detector uses the Interpreter API directly and does not require the Support Library or GPU delegate. NNAPI remains the selected acceleration path with a safe CPU fallback.
+
 ## Validation status
 
-The checked-in Gradle wrapper executed successfully with Gradle 8.7, and the native Gradle project configuration exposed the complete app task graph. Source-integrity checks also confirmed the expected TFLite flatbuffer marker (`TFL3`), the presence of all Kotlin sources and the absence of unexpanded template markers. The sandbox does not contain an Android SDK, so `:app:testDebugUnitTest` cannot run here; Android Studio will ask for the SDK during the first local sync. After accepting its SDK installation, run `./gradlew :app:testDebugUnitTest` before device testing.
+The checked-in Gradle wrapper executed successfully with Gradle 8.7. The project has been compiled and its `:app:testDebugUnitTest` task completed successfully against Android SDK Platform 35 using Java 17. Source-integrity checks also confirmed the expected TFLite flatbuffer marker (`TFL3`), the presence of all Kotlin sources, and the absence of unexpanded template markers.
+
+Use a complete Java 17 development kit for Android Studio/Gradle; the Android Gradle Plugin needs the JDK's `jlink` executable while compiling with API 35. Before device testing, run:
+
+```bash
+./gradlew :app:testDebugUnitTest
+./gradlew :app:assembleDebug
+```
 
 ## References
 
