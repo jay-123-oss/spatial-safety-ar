@@ -166,13 +166,7 @@ class MainActivity : ComponentActivity() {
             ArSafetyRenderer(
                 applicationContext,
                 onStateChanged = { state.value = it },
-                onAlert = { obstacle ->
-                    if (voiceEnabled) {
-                        obstacle.distanceMeters?.let { distance ->
-                            alertController.speakAlert(obstacle.zone.priority, obstacle.detection.label, distance)
-                        }
-                    }
-                },
+                onAlert = { decision -> alertController.playFeedback(decision, voiceEnabled) },
             )
         }.onSuccess { newRenderer ->
             renderer = newRenderer

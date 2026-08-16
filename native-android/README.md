@@ -1,41 +1,39 @@
-# Spatial Safety AR — Native Android module
+# Spatial Safety AR — Pure ARCore Android module
 
-यह module Android Studio में `native-android` directory खोलकर चलाया जा सकता है। यह ARCore और TensorFlow Lite पर आधारित एक **safety-assist prototype** है, न कि collision-avoidance system। Camera permission और Google Play Services for AR दोनों आवश्यक हैं।
+यह native Android Studio module एक **offline, ARCore-only safety prototype** है। इसमें TensorFlow Lite, LiteRT, neural-network model, labels file, remote API या machine-learning inference नहीं है। Camera preview, central depth measurement, point-cloud fallback, threat classification, text-to-speech और haptics सभी device पर locally चलती हैं। यह collision-avoidance system नहीं है; उपयोगकर्ता को अपने surroundings पर ध्यान बनाए रखना आवश्यक है।
 
-## Included implementation
+## Project structure
 
-| Component | Responsibility |
+| File | Purpose |
 |---|---|
-| `MainActivity` | ARCore installation check, runtime camera permission, session lifecycle and Compose host |
-| `ArSafetyRenderer` | `GLSurfaceView` camera feed, AR frame loop, detector dispatch and output mapping |
-| `ObjectDetectorHelper` | Bundled TFLite model loading, YUV conversion, serial background inference and delegate fallback |
-| `SpatialFusionEngine` | Depth sampling, four Hindi threat zones and anti-spam trigger policy |
-| `AlertController` | On-device Android TTS and priority haptic patterns |
-| `UIOverlayScreen` | Compose bounding boxes, highest-risk radar and live device metrics |
+| `app/build.gradle.kts` | Google ARCore, Jetpack Compose, coroutines और unit-test dependencies; ML dependencies नहीं |
+| `AndroidManifest.xml` | Camera/vibration permissions और optional ARCore declaration |
+| `MainActivity.kt` | ARCore availability/install gate, permission flow, `Session` lifecycle, autofocus और automatic depth configuration |
+| `ar/ArSafetyRenderer.kt` | OpenGL ES live AR camera feed, `Session.update()` frame loop और pure depth-engine dispatch |
+| `safety/ARCoreObstacleEngine.kt` | Center-region Depth API sampling, point-cloud fallback, zones, cooldown और escalation override |
+| `safety/AlertController.kt` | On-device TTS plus zone-specific `VibrationEffect` feedback and lifecycle cleanup |
+| `ui/UIOverlayScreen.kt` | Compose overlay with closest obstacle distance, threat color, depth source and FPS |
 
-## Model contract
+## Safety policy
 
-The bundled `ssd_mobilenet_v1.tflite` is an SSD MobileNet-style detector with the conventional four outputs: boxes `[1,N,4]` in `ymin,xmin,ymax,xmax` order; classes `[1,N]`; confidence scores `[1,N]`; and detection count `[1]`. The helper supports unsigned, signed or float RGB input tensors. A different model may be substituted if it maintains this output contract; YOLO exports require a dedicated output decoder before replacement.
+| Zone | Distance | UI color | Feedback |
+|---|---:|---|---|
+| Surakshit | `> 4 m` | Green | Silent |
+| Chetaavni | `2.5–4 m` | Yellow | Light pulse |
+| Savdhaan | `1–2.5 m` | Orange | Medium directional-style pulse and local voice alert |
+| Turant Ruke | `< 1 m` | Red | Repeating urgent vibration and local voice alert |
+
+The engine checks the central 24% of the Depth API image at a bounded cadence. It selects the nearest valid depth sample, because the closest object along the user’s forward path is the relevant safety signal. If ARCore has not produced a depth image yet, it evaluates high-confidence point-cloud samples in the same central field. Alert cooldown prevents repetitive audio; a closer distance or a more severe zone bypasses that cooldown.
 
 ## Run instructions
 
-Open this directory in Android Studio, allow Gradle synchronization, connect a supported ARCore Android device, and select **Run**. Google Play Services for AR may ask to update or install on first use. The app configures `Config.FocusMode.AUTO` and requests `Config.DepthMode.AUTOMATIC` only when the current device reports support. ARCore Depth estimates are generally strongest when the device is moving and the target lies roughly 0.5–5 metres away; the UI therefore presents an estimate and does not promise autonomous protection.[1]
+Open **`native-android`** in Android Studio, use a complete Java 17 JDK, let Android Studio install/sync Android SDK Platform 35, and run on an ARCore-capable Android device. Grant camera permission and accept Google Play Services for AR installation/update when prompted. Depth estimates improve while the user moves the phone; ARCore reports its most reliable depth around 0.5–5 metres in typical scenes.[1]
 
-The `GPU` metric intentionally reports `N/A` unless a device-specific profiler is added: Android exposes no reliable, portable public API for percentage GPU load. CPU is process-time based, while FPS is rendered-frame based.
-
-### Inference runtime dependency policy
-
-The module deliberately keeps only `org.tensorflow:tensorflow-lite:2.17.0`. That artifact bridges to LiteRT 1.0.1; adding `tensorflow-lite-support:0.4.4` also pulls legacy `tensorflow-lite-api:2.13.0`, which collides with LiteRT's compatibility classes at build time. The detector uses the Interpreter API directly and does not require the Support Library or GPU delegate. NNAPI remains the selected acceleration path with a safe CPU fallback.
-
-## Validation status
-
-The checked-in Gradle wrapper executed successfully with Gradle 8.7. The project has been compiled and its `:app:testDebugUnitTest` task completed successfully against Android SDK Platform 35 using Java 17. Source-integrity checks also confirmed the expected TFLite flatbuffer marker (`TFL3`), the presence of all Kotlin sources, and the absence of unexpanded template markers.
-
-Use a complete Java 17 development kit for Android Studio/Gradle; the Android Gradle Plugin needs the JDK's `jlink` executable while compiling with API 35. Before device testing, run:
+Run these checks before device testing:
 
 ```bash
 ./gradlew :app:testDebugUnitTest
-./gradlew :app:assembleDebug
+./gradlew :app:checkDebugDuplicateClasses
 ```
 
 ## References

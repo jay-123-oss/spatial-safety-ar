@@ -34,9 +34,6 @@ android {
         resources.excludes += "/META-INF/{AL2.0,LGPL2.1}"
     }
 
-    androidResources {
-        noCompress += "tflite"
-    }
 }
 
 dependencies {
@@ -53,9 +50,5 @@ dependencies {
     debugImplementation("androidx.compose.ui:ui-tooling")
 
     implementation("com.google.ar:core:1.54.0")
-    // TensorFlow Lite 2.17 delegates to LiteRT 1.0.1. Do not add tensorflow-lite-support
-    // (it pins the legacy tensorflow-lite-api:2.13.0 and creates duplicate runtime classes).
-    implementation("org.tensorflow:tensorflow-lite:2.17.0")
-
     testImplementation("junit:junit:4.13.2")
 }

@@ -1,7 +1,6 @@
 package com.manus.spatialsafety.ar.ui
 
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -10,7 +9,6 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -28,20 +26,18 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
-import androidx.compose.runtime.Immutable
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.Immutable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
-import com.manus.spatialsafety.ar.safety.FusedObstacle
+import com.manus.spatialsafety.ar.safety.DistanceSource
+import com.manus.spatialsafety.ar.safety.ObstacleReading
 import com.manus.spatialsafety.ar.safety.ThreatZone
 import com.manus.spatialsafety.ar.util.PerformanceStats
-import kotlin.math.roundToInt
 
 @Immutable
 data class SafetyUiState(
@@ -49,7 +45,7 @@ data class SafetyUiState(
     val paused: Boolean = false,
     val statusText: String = "Preparing AR session",
     val highestZone: ThreatZone = ThreatZone.UNKNOWN,
-    val obstacles: List<FusedObstacle> = emptyList(),
+    val reading: ObstacleReading = ObstacleReading(),
     val performance: PerformanceStats = PerformanceStats(),
     val errorMessage: String? = null,
 ) {
@@ -68,8 +64,6 @@ fun UIOverlayScreen(
 ) {
     val zoneColor = Color(state.highestZone.color)
     Box(modifier = Modifier.fillMaxSize()) {
-        DetectionBoxes(state.obstacles)
-
         Column(
             modifier = Modifier
                 .align(Alignment.TopCenter)
@@ -108,6 +102,8 @@ fun UIOverlayScreen(
             }
 
             Spacer(Modifier.height(10.dp))
+            DistanceCard(state.reading, zoneColor)
+            Spacer(Modifier.height(10.dp))
             PerformanceStrip(state.performance)
         }
 
@@ -140,11 +136,7 @@ fun UIOverlayScreen(
                 Spacer(Modifier.width(8.dp))
                 Text(if (state.paused) "Resume" else "Pause")
             }
-            OutlinedButton(
-                modifier = Modifier.height(52.dp),
-                onClick = onToggleVoice,
-                border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF94A3B8)),
-            ) {
+            OutlinedButton(modifier = Modifier.height(52.dp), onClick = onToggleVoice) {
                 Icon(Icons.Default.RecordVoiceOver, null)
                 Spacer(Modifier.width(8.dp))
                 Text(if (voiceEnabled) "Voice on" else "Voice off")
@@ -154,31 +146,24 @@ fun UIOverlayScreen(
 }
 
 @Composable
-private fun DetectionBoxes(obstacles: List<FusedObstacle>) {
-    val density = LocalDensity.current
-    obstacles.forEach { obstacle ->
-        val box = obstacle.detection.box
-        val color = Color(obstacle.zone.color)
-        val width = with(density) { box.width().coerceAtLeast(2f).toDp() }
-        val height = with(density) { box.height().coerceAtLeast(2f).toDp() }
-        Box(
-            modifier = Modifier
-                .offset { IntOffset(box.left.roundToInt(), box.top.roundToInt()) }
-                .width(width)
-                .height(height)
-                .border(3.dp, color, RoundedCornerShape(5.dp)),
+private fun DistanceCard(reading: ObstacleReading, zoneColor: Color) {
+    val distance = reading.distanceMeters?.let { String.format("%.1f m", it) } ?: "—"
+    val source = when (reading.source) {
+        DistanceSource.DEPTH_IMAGE -> "ARCore Depth API"
+        DistanceSource.POINT_CLOUD -> "ARCore point cloud"
+        DistanceSource.UNAVAILABLE -> "Move device slowly to map depth"
+    }
+    Card(colors = CardDefaults.cardColors(containerColor = Color(0xD9071019)), shape = RoundedCornerShape(16.dp)) {
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 18.dp, vertical = 14.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween,
         ) {
-            val distanceText = obstacle.distanceMeters?.let { String.format("%.1f m", it) } ?: "estimating"
-            Text(
-                text = "${obstacle.detection.label.replaceFirstChar(Char::uppercase)} · $distanceText",
-                modifier = Modifier
-                    .align(Alignment.TopStart)
-                    .background(color, RoundedCornerShape(bottomEnd = 6.dp))
-                    .padding(horizontal = 7.dp, vertical = 4.dp),
-                color = Color(0xFF071019),
-                fontWeight = FontWeight.Bold,
-                style = MaterialTheme.typography.labelSmall,
-            )
+            Column {
+                Text("Closest obstacle", color = Color(0xFF94A3B8), style = MaterialTheme.typography.labelMedium)
+                Text(distance, color = zoneColor, fontWeight = FontWeight.Bold, style = MaterialTheme.typography.displaySmall)
+            }
+            Text(source, color = Color(0xFFCBD5E1), style = MaterialTheme.typography.labelSmall)
         }
     }
 }

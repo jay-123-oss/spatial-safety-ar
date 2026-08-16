@@ -1,6 +1,5 @@
 package com.manus.spatialsafety.ar.safety
 
-import android.graphics.RectF
 import androidx.annotation.ColorInt
 
 enum class ThreatZone(
@@ -15,22 +14,20 @@ enum class ThreatZone(
     UNKNOWN("Scanning", 0xFF94A3B8.toInt(), -1),
 }
 
-data class Detection(
-    val label: String,
-    val confidence: Float,
-    val box: RectF,
+/** Closest center-region depth estimate for the current tracked AR frame. */
+data class ObstacleReading(
+    val distanceMeters: Float? = null,
+    val zone: ThreatZone = ThreatZone.UNKNOWN,
+    val source: DistanceSource = DistanceSource.UNAVAILABLE,
 )
 
-data class FusedObstacle(
-    val detection: Detection,
-    val distanceMeters: Float?,
-    val zone: ThreatZone,
-    val obstacleKey: String,
-)
+enum class DistanceSource {
+    DEPTH_IMAGE,
+    POINT_CLOUD,
+    UNAVAILABLE,
+}
 
 data class AlertDecision(
-    val priorityLevel: Int,
-    val hazardName: String,
-    val distanceMeters: Float,
     val zone: ThreatZone,
+    val distanceMeters: Float,
 )
