@@ -37,4 +37,4 @@
 - [x] Refactor the ARCore renderer and MainActivity to operate without ML frames or object detections.
 - [x] Update Compose dashboard for live camera preview, closest obstacle distance, threat state, and FPS.
 - [x] Build and test the pure ARCore app with no TensorFlow/LiteRT artifacts in the dependency graph.
-- [ ] Push the verified ARCore-only refactor to the private repository's main branch.
+- [x] Push the verified ARCore-only refactor to the private repository's main branch.
