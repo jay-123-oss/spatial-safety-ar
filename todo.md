@@ -13,7 +13,7 @@
 - [ ] Create a private GitHub repository and push the completed source code.
 
 - [x] Regenerate a lower-size launcher icon and replace the oversized branding assets.
-- [ ] Re-run checkpoint save after the optimized icon replacement.
+- [x] Re-run checkpoint save after the optimized icon replacement.
 - [ ] Push the checkpointed project to a private GitHub repository.
 
 ## Change history
