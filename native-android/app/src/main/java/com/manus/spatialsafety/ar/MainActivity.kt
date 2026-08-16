@@ -21,20 +21,26 @@ import androidx.compose.ui.viewinterop.AndroidView
 import com.google.ar.core.ArCoreApk
 import com.google.ar.core.Config
 import com.google.ar.core.Session
-import com.google.ar.core.exceptions.UnavailableArcoreNotInstalledException
 import com.google.ar.core.exceptions.UnavailableApkTooOldException
+import com.google.ar.core.exceptions.UnavailableArcoreNotInstalledException
 import com.google.ar.core.exceptions.UnavailableDeviceNotCompatibleException
 import com.google.ar.core.exceptions.UnavailableSdkTooOldException
+import com.google.ar.core.exceptions.UnavailableUserDeclinedInstallationException
 import com.manus.spatialsafety.ar.ar.ArSafetyRenderer
 import com.manus.spatialsafety.ar.safety.AlertController
 import com.manus.spatialsafety.ar.ui.SafetyUiState
 import com.manus.spatialsafety.ar.ui.UIOverlayScreen
 import kotlinx.coroutines.flow.MutableStateFlow
 
+/**
+ * Hosts the AR experience only after the device, ARCore service, camera permission, and renderer
+ * are ready. Every startup failure becomes a visible Compose fallback state instead of a process
+ * crash, so the app remains open even on unsupported or partially configured devices.
+ */
 class MainActivity : ComponentActivity() {
     private val state = MutableStateFlow(SafetyUiState())
-    private lateinit var glSurfaceView: GLSurfaceView
-    private lateinit var renderer: ArSafetyRenderer
+    private var glSurfaceView by mutableStateOf<GLSurfaceView?>(null)
+    private var renderer: ArSafetyRenderer? = null
     private lateinit var alertController: AlertController
     private var session: Session? = null
     private var installRequested = false
@@ -43,30 +49,13 @@ class MainActivity : ComponentActivity() {
     private val cameraPermissionRequest = registerForActivityResult(
         ActivityResultContracts.RequestPermission(),
     ) { granted ->
-        if (granted) startArIfReady() else state.value = SafetyUiState.error("Camera permission is required to scan obstacles.")
+        if (granted) startArIfReady() else showStartupError("Camera permission is required to scan obstacles.")
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         alertController = AlertController(applicationContext)
-        renderer = ArSafetyRenderer(
-            applicationContext,
-            onStateChanged = { state.value = it },
-            onAlert = { obstacle ->
-                if (voiceEnabled) {
-                    obstacle.distanceMeters?.let { distance ->
-                        alertController.speakAlert(obstacle.zone.priority, obstacle.detection.label, distance)
-                    }
-                }
-            },
-        )
-        glSurfaceView = GLSurfaceView(this).apply {
-            setEGLContextClientVersion(2)
-            setRenderer(renderer)
-            renderMode = GLSurfaceView.RENDERMODE_CONTINUOUSLY
-            preserveEGLContextOnPause = true
-        }
 
         setContent {
             val uiState by state.collectAsState()
@@ -78,14 +67,16 @@ class MainActivity : ComponentActivity() {
                 ),
             ) {
                 Box {
-                    AndroidView(
-                        factory = { glSurfaceView },
-                        modifier = Modifier.fillMaxSize(),
-                    )
+                    glSurfaceView?.let { surfaceView ->
+                        AndroidView(
+                            factory = { surfaceView },
+                            modifier = Modifier.fillMaxSize(),
+                        )
+                    }
                     UIOverlayScreen(
                         state = uiState,
                         voiceEnabled = voiceEnabled,
-                        onToggleScanning = { renderer.setScanningEnabled(uiState.paused) },
+                        onToggleScanning = { renderer?.setScanningEnabled(uiState.paused) },
                         onToggleVoice = { voiceEnabled = !voiceEnabled },
                     )
                 }
@@ -103,8 +94,32 @@ class MainActivity : ComponentActivity() {
             cameraPermissionRequest.launch(Manifest.permission.CAMERA)
             return
         }
+
+        val arCore = ArCoreApk.getInstance()
+        val availability = arCore.checkAvailability(this)
+        when {
+            availability.isUnsupported() -> {
+                showStartupError("This device does not support ARCore. The safety scanner cannot start here.")
+                return
+            }
+            availability.isTransient() -> {
+                state.value = SafetyUiState(statusText = "Checking ARCore availability")
+                arCore.checkAvailabilityAsync(this) { result ->
+                    runOnUiThread {
+                        if (result.isSupported()) startArIfReady()
+                        else if (!result.isTransient()) showStartupError("ARCore availability could not be verified.")
+                    }
+                }
+                return
+            }
+            !availability.isSupported() -> {
+                showStartupError("ARCore availability could not be verified on this device.")
+                return
+            }
+        }
+
         try {
-            when (ArCoreApk.getInstance().requestInstall(this, !installRequested)) {
+            when (arCore.requestInstall(this, !installRequested)) {
                 ArCoreApk.InstallStatus.INSTALL_REQUESTED -> {
                     installRequested = true
                     state.value = SafetyUiState(statusText = "Installing Google Play Services for AR")
@@ -112,6 +127,8 @@ class MainActivity : ComponentActivity() {
                 }
                 ArCoreApk.InstallStatus.INSTALLED -> Unit
             }
+
+            ensureRenderer()
             if (session == null) {
                 session = Session(this).also { arSession ->
                     val config = Config(arSession).apply {
@@ -123,32 +140,65 @@ class MainActivity : ComponentActivity() {
                         }
                     }
                     arSession.configure(config)
-                    renderer.setSession(arSession)
+                    renderer?.setSession(arSession)
                 }
             }
             session?.resume()
-            glSurfaceView.onResume()
+            glSurfaceView?.onResume()
         } catch (_: UnavailableArcoreNotInstalledException) {
-            state.value = SafetyUiState.error("Google Play Services for AR is not installed.")
+            showStartupError("Google Play Services for AR is not installed.")
         } catch (_: UnavailableApkTooOldException) {
-            state.value = SafetyUiState.error("Google Play Services for AR needs an update.")
+            showStartupError("Google Play Services for AR needs an update.")
         } catch (_: UnavailableSdkTooOldException) {
-            state.value = SafetyUiState.error("This app needs a newer ARCore SDK implementation.")
+            showStartupError("This app needs a newer ARCore SDK implementation.")
         } catch (_: UnavailableDeviceNotCompatibleException) {
-            state.value = SafetyUiState.error("This device does not support ARCore.")
+            showStartupError("This device does not support ARCore.")
+        } catch (_: UnavailableUserDeclinedInstallationException) {
+            showStartupError("Google Play Services for AR installation was declined.")
         } catch (error: Exception) {
-            state.value = SafetyUiState.error(error.message ?: "Unable to start the AR session.")
+            showStartupError(error.message ?: "Unable to start the AR session.")
         }
     }
 
+    private fun ensureRenderer() {
+        if (renderer != null && glSurfaceView != null) return
+        runCatching {
+            ArSafetyRenderer(
+                applicationContext,
+                onStateChanged = { state.value = it },
+                onAlert = { obstacle ->
+                    if (voiceEnabled) {
+                        obstacle.distanceMeters?.let { distance ->
+                            alertController.speakAlert(obstacle.zone.priority, obstacle.detection.label, distance)
+                        }
+                    }
+                },
+            )
+        }.onSuccess { newRenderer ->
+            renderer = newRenderer
+            glSurfaceView = GLSurfaceView(this).apply {
+                setEGLContextClientVersion(2)
+                setRenderer(newRenderer)
+                renderMode = GLSurfaceView.RENDERMODE_CONTINUOUSLY
+                preserveEGLContextOnPause = true
+            }
+        }.onFailure { error ->
+            showStartupError("Detector initialization failed: ${error.message ?: "unknown error"}")
+        }
+    }
+
+    private fun showStartupError(message: String) {
+        state.value = SafetyUiState.error(message)
+    }
+
     override fun onPause() {
-        glSurfaceView.onPause()
+        glSurfaceView?.onPause()
         session?.pause()
         super.onPause()
     }
 
     override fun onDestroy() {
-        renderer.close()
+        renderer?.close()
         alertController.close()
         session?.close()
         super.onDestroy()

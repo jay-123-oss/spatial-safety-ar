@@ -24,3 +24,8 @@
 - [x] Align inference dependencies to a single runtime and update affected Kotlin imports.
 - [x] Run dependency, Gradle, and unit-test validation after the inference-runtime fix.
 - [x] Push the verified duplicate-class resolution to the private repository's main branch.
+
+- [x] Diagnose why the installed Android app closes or does not open.
+- [x] Fix the native Android launch path and unsupported-device fallback behavior.
+- [x] Build and validate the repaired Android app startup flow.
+- [ ] Push the verified startup repair to the private repository's main branch.
