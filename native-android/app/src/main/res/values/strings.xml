@@ -1,0 +1,4 @@
+<resources>
+    <string name="app_name">Spatial Safety AR</string>
+    <string name="camera_permission_rationale">Spatial Safety AR needs camera access to estimate nearby obstacles.</string>
+</resources>

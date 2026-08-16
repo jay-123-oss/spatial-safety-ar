@@ -32,7 +32,7 @@ const env = {
   appSlug: "spatial-safety-ar",
   // S3 URL of the app logo - set this to the URL returned by generate_image when creating custom logo
   // Leave empty to use the default icon from assets/images/icon.png
-  logoUrl: "",
+  logoUrl: "/manus-storage/spatial-safety-ar-icon-lite_cff71796.png",
   scheme: schemeFromBundleId,
   iosBundleId: bundleId,
   androidPackage: bundleId,
