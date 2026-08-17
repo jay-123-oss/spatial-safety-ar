@@ -378,7 +378,8 @@ class SpatialFusion(private val medianRadiusPx: Int = 2) {
             !box.left.isFinite() || !box.top.isFinite() || !box.right.isFinite() || !box.bottom.isFinite() ||
             !k.fx.isFinite() || !k.fy.isFinite() || !k.cx.isFinite() || !k.cy.isFinite() ||
             k.fx <= 0f || k.fy <= 0f) return@mapNotNull null
-        val x = box.centerX(); val y = box.centerY()
+        val x = (box.left + box.right) * 0.5f
+        val y = (box.top + box.bottom) * 0.5f
         if (!x.isFinite() || !y.isFinite()) return@mapNotNull null
         val depth = robustDepth(frame.depth, x, y) ?: return@mapNotNull null
         if (depth <= 0f || !depth.isFinite() || depth > 30f) return@mapNotNull null
