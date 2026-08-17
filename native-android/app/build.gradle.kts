@@ -52,8 +52,9 @@ dependencies {
     implementation("androidx.camera:camera-camera2:1.4.1")
     implementation("androidx.camera:camera-lifecycle:1.4.1")
     implementation("androidx.camera:camera-core:1.4.1")
-    implementation("org.tensorflow:tensorflow-lite:2.17.0")
-    implementation("org.tensorflow:tensorflow-lite-gpu:2.17.0")
-    implementation("org.tensorflow:tensorflow-lite-support:0.4.4")
+    // Keep all runtime artifacts on one legacy TensorFlow Lite line. Mixing these with
+    // com.google.ai.edge.litert:litert-api produces duplicate org.tensorflow.lite classes.
+    implementation("org.tensorflow:tensorflow-lite:2.13.0")
+    implementation("org.tensorflow:tensorflow-lite-gpu:2.13.0")
     testImplementation("junit:junit:4.13.2")
 }
