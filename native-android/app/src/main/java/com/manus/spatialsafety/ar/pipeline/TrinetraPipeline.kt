@@ -137,6 +137,8 @@ data class CameraIntrinsics(val fx: Float, val fy: Float, val cx: Float, val cy:
 
 // ---------- TFLite wrapper ----------
 
+enum class YoloPrecision { AUTO, FP16, INT8 }
+
 data class DetectorTuning(
     val confidenceThreshold: Float = 0.30f,
     val iouThreshold: Float = 0.50f,
@@ -163,6 +165,7 @@ class YoloTflite(
     private val inputWidth: Int = 640,
     private val inputHeight: Int = 640,
     private val tuning: DetectorTuning = DetectorTuning.BALANCED,
+    private val precision: YoloPrecision = YoloPrecision.AUTO,
 ) : Closeable {
     private val confidenceThreshold = tuning.confidenceThreshold
     private val iouThreshold = tuning.iouThreshold
@@ -171,7 +174,11 @@ class YoloTflite(
     private val inputType: DataType
     private val inputScale: Float
     private val inputZeroPoint: Int
+    private val outputType: DataType
+    private val outputScale: Float
+    private val outputZeroPoint: Int
     private val input: ByteBuffer
+    private val output: ByteBuffer
     private val outputShape: IntArray
 
     init {
@@ -190,13 +197,30 @@ class YoloTflite(
         require(inputType == DataType.FLOAT32 || inputType == DataType.UINT8 || inputType == DataType.INT8) {
             "Unsupported YOLO input type: $inputType"
         }
+        when (precision) {
+            YoloPrecision.FP16 -> require(inputType == DataType.FLOAT32) {
+                "FP16 TFLite models still expose FLOAT32 input; got $inputType"
+            }
+            YoloPrecision.INT8 -> require(inputType == DataType.INT8 || inputType == DataType.UINT8) {
+                "INT8 mode requires INT8/UINT8 input; got $inputType"
+            }
+            YoloPrecision.AUTO -> Unit
+        }
         val bytesPerChannel = if (inputType == DataType.FLOAT32) 4 else 1
         input = ByteBuffer.allocateDirect(inputWidth * inputHeight * 3 * bytesPerChannel)
             .order(ByteOrder.nativeOrder())
-        outputShape = interpreter.getOutputTensor(0).shape()
+        val outputTensor = interpreter.getOutputTensor(0)
+        outputType = outputTensor.dataType()
+        outputScale = outputTensor.quantizationParams().scale
+        outputZeroPoint = outputTensor.quantizationParams().zeroPoint
+        require(outputType == DataType.FLOAT32 || outputType == DataType.UINT8 || outputType == DataType.INT8) {
+            "Unsupported YOLO output type: $outputType"
+        }
+        outputShape = outputTensor.shape()
         require(outputShape.size == 3 && outputShape[0] == 1) {
             "Expected YOLO output rank 3, got ${outputShape.contentToString()}"
         }
+        output = ByteBuffer.allocateDirect(outputTensor.numBytes()).order(ByteOrder.nativeOrder())
     }
 
     fun detect(bitmap: Bitmap, sourceWidth: Int, sourceHeight: Int, timestampNs: Long): List<Detection> {
@@ -206,23 +230,31 @@ class YoloTflite(
             val pixels = IntArray(inputWidth * inputHeight)
             transform.image.getPixels(pixels, 0, inputWidth, 0, 0, inputWidth, inputHeight)
             for (p in pixels) putRgb(p)
-            val output = Array(1) { Array(outputShape[1]) { FloatArray(outputShape[2]) } }
+            output.rewind()
             interpreter.run(input, output)
-            val rows = output[0]
             val channelsFirst = outputShape[1] <= outputShape[2]
             val count = if (channelsFirst) outputShape[2] else outputShape[1]
             val channels = if (channelsFirst) outputShape[1] else outputShape[2]
+            fun value(channel: Int, index: Int): Float {
+                val flatIndex = if (channelsFirst) channel * count + index else index * channels + channel
+                val byteIndex = flatIndex * if (outputType == DataType.FLOAT32) 4 else 1
+                return when (outputType) {
+                    DataType.FLOAT32 -> output.getFloat(byteIndex)
+                    DataType.UINT8 -> ((output.get(byteIndex).toInt() and 0xff) - outputZeroPoint) * outputScale
+                    DataType.INT8 -> (output.get(byteIndex).toInt() - outputZeroPoint) * outputScale
+                    else -> error("Unsupported output type")
+                }
+            }
             val candidates = ArrayList<Detection>()
             for (i in 0 until count) {
-                fun value(channel: Int): Float = if (channelsFirst) rows[channel][i] else rows[i][channel]
                 if (channels < 5) continue
                 var bestClass = -1; var bestScore = 0f
                 for (c in 4 until channels) {
-                    val score = value(c)
+                    val score = value(c, i)
                     if (score > bestScore) { bestScore = score; bestClass = c - 4 }
                 }
                 if (bestClass < 0 || bestScore < confidenceThreshold) continue
-                var cx = value(0); var cy = value(1); var bw = value(2); var bh = value(3)
+                var cx = value(0, i); var cy = value(1, i); var bw = value(2, i); var bh = value(3, i)
                 // YOLO exports differ: some emit pixels in the input tensor space, others emit 0..1.
                 // Normalize only when the four box values clearly use the normalized convention.
                 if (maxOf(abs(cx), abs(cy), abs(bw), abs(bh)) <= 2f) {
