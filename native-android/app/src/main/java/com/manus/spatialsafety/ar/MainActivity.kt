@@ -137,6 +137,7 @@ class MainActivity : ComponentActivity() {
                     renderer?.setSession(arSession)
                 }
             }
+            renderer?.setSession(session ?: error("ARCore session was not created"))
             session?.resume()
             glSurfaceView?.onResume()
         } catch (_: UnavailableArcoreNotInstalledException) {
@@ -181,15 +182,22 @@ class MainActivity : ComponentActivity() {
     }
 
     override fun onPause() {
+        // Stop GL rendering first. ARCore session calls must not race an active onDrawFrame().
         glSurfaceView?.onPause()
         session?.pause()
+        renderer?.detachSession()
         super.onPause()
     }
 
     override fun onDestroy() {
+        // onPause() normally ran first, but keep destruction safe when the activity is finished
+        // directly by the system or a test harness.
+        glSurfaceView?.onPause()
+        renderer?.detachSession()
         renderer?.close()
         alertController.close()
         session?.close()
+        session = null
         super.onDestroy()
     }
 }

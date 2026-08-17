@@ -4,6 +4,8 @@ import android.content.Context
 import android.media.AudioManager
 import android.media.ToneGenerator
 import android.os.Build
+import android.os.Handler
+import android.os.Looper
 import android.os.VibrationEffect
 import android.os.Vibrator
 
@@ -17,12 +19,17 @@ import android.os.Vibrator
 class AlertController(context: Context) : AutoCloseable {
     private val vibrator = context.getSystemService(Vibrator::class.java)
     private val toneGenerator = ToneGenerator(AudioManager.STREAM_NOTIFICATION, TONE_VOLUME)
+    private val feedbackHandler = Handler(Looper.getMainLooper())
     private var emergencyVibrationActive = false
     private var lastToneAtMs = 0L
     private var lastToneZone = ThreatZone.UNKNOWN
 
     /** Plays a single local tone or starts/stops the emergency pattern for one engine event. */
     fun playFeedback(decision: AlertDecision) {
+        feedbackHandler.post { handleFeedback(decision) }
+    }
+
+    private fun handleFeedback(decision: AlertDecision) {
         when (decision.zone) {
             ThreatZone.SURAKSHIT -> {
                 stopEmergencyVibration()
@@ -72,6 +79,13 @@ class AlertController(context: Context) : AutoCloseable {
 
     /** Must be called on unknown/tracking-loss, safe transition, pause and activity close. */
     fun cancelAllFeedback() {
+        feedbackHandler.post {
+            feedbackHandler.removeCallbacksAndMessages(null)
+            handleCancelAllFeedback()
+        }
+    }
+
+    private fun handleCancelAllFeedback() {
         stopEmergencyVibration()
         toneGenerator.stopTone()
         lastToneZone = ThreatZone.UNKNOWN
@@ -79,7 +93,8 @@ class AlertController(context: Context) : AutoCloseable {
     }
 
     override fun close() {
-        cancelAllFeedback()
+        feedbackHandler.removeCallbacksAndMessages(null)
+        handleCancelAllFeedback()
         toneGenerator.release()
     }
 

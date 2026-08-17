@@ -39,6 +39,13 @@ class ArSafetyRenderer(
         session = arSession
     }
 
+    /** Must be called only after GLSurfaceView.onPause() has stopped onDrawFrame(). */
+    fun detachSession() {
+        session = null
+        obstacleEngine.reset()
+        resetFeedbackIfNeeded()
+    }
+
     override fun onSurfaceCreated(gl: GL10?, config: EGLConfig?) {
         GLES20.glClearColor(0.027f, 0.063f, 0.098f, 1f)
         backgroundRenderer.createOnGlThread()
@@ -109,7 +116,11 @@ class ArSafetyRenderer(
         )
     }
 
-    override fun close() = resetFeedbackIfNeeded()
+    override fun close() {
+        session = null
+        obstacleEngine.reset()
+        resetFeedbackIfNeeded()
+    }
 }
 
 /** Minimal OpenGL ES 2.0 renderer for ARCore's camera external texture. */

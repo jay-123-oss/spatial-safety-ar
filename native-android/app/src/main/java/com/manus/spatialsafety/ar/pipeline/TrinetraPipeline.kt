@@ -353,7 +353,7 @@ class SpatialFusion(private val medianRadiusPx: Int = 2) {
 
 // ---------- World model and collision prediction ----------
 
-data class WorldObject(val object: FusedObject, val velocity: Vec3, val ageMs: Long)
+data class WorldObject(val fused: FusedObject, val velocity: Vec3, val ageMs: Long)
 enum class RiskState { SAFE, CAUTION, DANGER }
 data class Risk(val state: RiskState, val ttcSeconds: Float?, val distanceMeters: Float)
 
@@ -379,7 +379,7 @@ class CollisionPredictor(
     private val warningTtc: Float = 4f
 ) {
     fun evaluate(o: WorldObject): Risk {
-        val d = o.object.realDistanceMeters
+        val d = o.fused.realDistanceMeters
         val closingSpeed = -o.velocity.z // camera-forward convention: +Z is forward
         val ttc = if (closingSpeed > 0.05f) d / closingSpeed else null
         val state = when {
@@ -428,11 +428,11 @@ class SmartAlertManager(
         if (next == RiskState.DANGER && previous == RiskState.CAUTION) tts.stop()
         when (next) {
             RiskState.DANGER -> {
-                vibrate(longArrayOf(0, 700), true)
+                vibrate(longArrayOf(0, 700), 1)
                 if (now - lastDanger >= 3000L) { speak("Ruko"); lastDanger = now }
             }
             RiskState.CAUTION -> {
-                vibrate(longArrayOf(0, 120, 180, 120), true)
+                vibrate(longArrayOf(0, 120, 180, 120), 1)
                 if (now - lastCaution >= 5000L) { speak("Sabdhan"); lastCaution = now }
             }
             RiskState.SAFE -> {
