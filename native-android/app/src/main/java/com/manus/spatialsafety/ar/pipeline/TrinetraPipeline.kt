@@ -142,57 +142,137 @@ class YoloTflite(
     modelBytes: ByteBuffer,
     private val labels: List<String>,
     private val inputWidth: Int = 640,
-    private val inputHeight: Int = 640
+    private val inputHeight: Int = 640,
+    private val confidenceThreshold: Float = 0.25f,
+    private val iouThreshold: Float = 0.45f,
 ) : Closeable {
     private val delegate: AutoCloseable?
     private val interpreter: Interpreter
-    private val input: ByteBuffer = ByteBuffer.allocateDirect(inputWidth * inputHeight * 3)
-        .order(ByteOrder.nativeOrder())
+    private val inputType: DataType
+    private val inputScale: Float
+    private val inputZeroPoint: Int
+    private val input: ByteBuffer
+    private val outputShape: IntArray
 
     init {
         val options = Interpreter.Options()
         delegate = try { NnApiDelegate() } catch (_: Throwable) {
-            try {
-                if (CompatibilityList().isDelegateSupportedOnThisDevice) GpuDelegate() else null
-            } catch (_: Throwable) { null }
+            try { if (CompatibilityList().isDelegateSupportedOnThisDevice) GpuDelegate() else null }
+            catch (_: Throwable) { null }
         }
         if (delegate != null) options.addDelegate(delegate as org.tensorflow.lite.Delegate)
         else options.setNumThreads(4).setUseXNNPACK(true)
         interpreter = Interpreter(modelBytes, options)
+        val inputTensor = interpreter.getInputTensor(0)
+        inputType = inputTensor.dataType()
+        inputScale = inputTensor.quantizationParams().scale
+        inputZeroPoint = inputTensor.quantizationParams().zeroPoint
+        require(inputType == DataType.FLOAT32 || inputType == DataType.UINT8 || inputType == DataType.INT8) {
+            "Unsupported YOLO input type: $inputType"
+        }
+        val bytesPerChannel = if (inputType == DataType.FLOAT32) 4 else 1
+        input = ByteBuffer.allocateDirect(inputWidth * inputHeight * 3 * bytesPerChannel)
+            .order(ByteOrder.nativeOrder())
+        outputShape = interpreter.getOutputTensor(0).shape()
+        require(outputShape.size == 3 && outputShape[0] == 1) {
+            "Expected YOLO output rank 3, got ${outputShape.contentToString()}"
+        }
     }
 
     fun detect(bitmap: Bitmap, sourceWidth: Int, sourceHeight: Int, timestampNs: Long): List<Detection> {
-        val scaled = Bitmap.createScaledBitmap(bitmap, inputWidth, inputHeight, true)
-        input.rewind()
-        val pixels = IntArray(inputWidth * inputHeight)
-        scaled.getPixels(pixels, 0, inputWidth, 0, 0, inputWidth, inputHeight)
-        for (p in pixels) {
-            input.put((p shr 16 and 0xff).toByte())
-            input.put((p shr 8 and 0xff).toByte())
-            input.put((p and 0xff).toByte())
+        val transform = letterbox(bitmap, inputWidth, inputHeight)
+        try {
+            input.rewind()
+            val pixels = IntArray(inputWidth * inputHeight)
+            transform.image.getPixels(pixels, 0, inputWidth, 0, 0, inputWidth, inputHeight)
+            for (p in pixels) putRgb(p)
+            val output = Array(1) { Array(outputShape[1]) { FloatArray(outputShape[2]) } }
+            interpreter.run(input, output)
+            val rows = output[0]
+            val channelsFirst = outputShape[1] <= outputShape[2]
+            val count = if (channelsFirst) outputShape[2] else outputShape[1]
+            val channels = if (channelsFirst) outputShape[1] else outputShape[2]
+            val candidates = ArrayList<Detection>()
+            for (i in 0 until count) {
+                fun value(channel: Int): Float = if (channelsFirst) rows[channel][i] else rows[i][channel]
+                if (channels < 5) continue
+                var bestClass = -1; var bestScore = 0f
+                for (c in 4 until channels) {
+                    val score = value(c)
+                    if (score > bestScore) { bestScore = score; bestClass = c - 4 }
+                }
+                if (bestClass < 0 || bestScore < confidenceThreshold) continue
+                var cx = value(0); var cy = value(1); var bw = value(2); var bh = value(3)
+                // YOLO exports differ: some emit pixels in the input tensor space, others emit 0..1.
+                // Normalize only when the four box values clearly use the normalized convention.
+                if (maxOf(abs(cx), abs(cy), abs(bw), abs(bh)) <= 2f) {
+                    cx *= inputWidth; cy *= inputHeight; bw *= inputWidth; bh *= inputHeight
+                }
+                val box = RectF(
+                    ((cx - bw / 2f) - transform.padX) / transform.scale,
+                    ((cy - bh / 2f) - transform.padY) / transform.scale,
+                    ((cx + bw / 2f) - transform.padX) / transform.scale,
+                    ((cy + bh / 2f) - transform.padY) / transform.scale,
+                )
+                box.intersect(0f, 0f, sourceWidth.toFloat(), sourceHeight.toFloat())
+                if (box.width() >= 2f && box.height() >= 2f) {
+                    candidates += Detection(labels.getOrElse(bestClass) { "unknown" }, bestScore, box, timestampNs)
+                }
+            }
+            return nms(candidates)
+        } finally {
+            transform.image.recycle()
         }
-        if (scaled !== bitmap) scaled.recycle()
-
-        // Model-specific output decoding must match the exported YOLOv8 TFLite signature.
-        // The tensor buffers are allocated once in a real adapter; this example uses output arrays.
-        val output = Array(1) { Array(84) { FloatArray(8400) } }
-        interpreter.run(input, output)
-        return decodeYoloOutput(output[0], sourceWidth, sourceHeight, timestampNs)
     }
 
-    private fun decodeYoloOutput(t: Array<FloatArray>, w: Int, h: Int, ts: Long): List<Detection> {
-        val result = ArrayList<Detection>()
-        for (i in t[0].indices) {
-            var best = 0; var score = 0f
-            for (c in 4 until t.size) if (t[c][i] > score) { score = t[c][i]; best = c - 4 }
-            if (score < 0.35f) continue
-            val cx = t[0][i] * w / inputWidth; val cy = t[1][i] * h / inputHeight
-            val bw = t[2][i] * w / inputWidth; val bh = t[3][i] * h / inputHeight
-            result += Detection(labels.getOrElse(best) { "unknown" }, score,
-                RectF(cx - bw / 2, cy - bh / 2, cx + bw / 2, cy + bh / 2), ts)
+    private fun putRgb(pixel: Int) {
+        val channels = intArrayOf(pixel shr 16 and 0xff, pixel shr 8 and 0xff, pixel and 0xff)
+        for (channel in channels) when (inputType) {
+            DataType.FLOAT32 -> input.putFloat(channel / 255f)
+            DataType.UINT8 -> input.put(channel.toByte())
+            DataType.INT8 -> {
+                require(inputScale > 0f) { "INT8 input tensor has no quantization scale" }
+                input.put((channel / 255f / inputScale + inputZeroPoint).toInt().coerceIn(-128, 127).toByte())
+            }
+            else -> error("Unsupported input type")
         }
-        return result
     }
+
+    private fun nms(input: List<Detection>): List<Detection> {
+        val kept = ArrayList<Detection>()
+        input.groupBy { it.label }.values.forEach { group ->
+            val remaining = group.sortedByDescending { it.confidence }.toMutableList()
+            while (remaining.isNotEmpty()) {
+                val best = remaining.removeAt(0); kept += best
+                remaining.removeAll { iou(best.box, it.box) >= iouThreshold }
+            }
+        }
+        return kept
+    }
+
+    private fun iou(a: RectF, b: RectF): Float {
+        val left = maxOf(a.left, b.left); val top = maxOf(a.top, b.top)
+        val right = minOf(a.right, b.right); val bottom = minOf(a.bottom, b.bottom)
+        val intersection = maxOf(0f, right - left) * maxOf(0f, bottom - top)
+        val union = a.width() * a.height() + b.width() * b.height() - intersection
+        return if (union > 0f) intersection / union else 0f
+    }
+
+    private data class Letterbox(val image: Bitmap, val scale: Float, val padX: Float, val padY: Float)
+    private fun letterbox(source: Bitmap, width: Int, height: Int): Letterbox {
+        val scale = minOf(width.toFloat() / source.width, height.toFloat() / source.height)
+        val resizedWidth = (source.width * scale).toInt().coerceAtLeast(1)
+        val resizedHeight = (source.height * scale).toInt().coerceAtLeast(1)
+        val resized = Bitmap.createScaledBitmap(source, resizedWidth, resizedHeight, true)
+        val output = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
+        val canvas = android.graphics.Canvas(output)
+        canvas.drawColor(android.graphics.Color.rgb(114, 114, 114))
+        val left = (width - resizedWidth) / 2f; val top = (height - resizedHeight) / 2f
+        canvas.drawBitmap(resized, left, top, android.graphics.Paint(android.graphics.Paint.FILTER_BITMAP_FLAG))
+        resized.recycle()
+        return Letterbox(output, scale, left, top)
+    }
+
     override fun close() { interpreter.close(); delegate?.close() }
 }
 
