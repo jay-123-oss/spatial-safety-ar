@@ -35,7 +35,7 @@
 - [x] Remove all TensorFlow Lite/LiteRT dependencies, assets, source classes, and documentation references.
 - [x] Implement `ARCoreObstacleEngine` with center-region depth sampling, four threat zones, cooldown, and priority override.
 - [x] Refactor the ARCore renderer and MainActivity to operate without ML frames or object detections.
-- [x] Update Compose dashboard for live camera preview, closest obstacle distance, threat state, and FPS.
+- [x] Update Compose dashboard for live AR camera preview, closest obstacle distance, threat state, and FPS.
 - [x] Build and test the pure ARCore app with no TensorFlow/LiteRT artifacts in the dependency graph.
 - [x] Push the verified ARCore-only refactor to the private repository's main branch.
 

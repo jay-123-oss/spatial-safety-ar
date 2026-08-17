@@ -117,7 +117,15 @@ private fun DistanceCard(reading: ObstacleReading, zoneColor: Color) {
                 Text("Closest obstacle", color = Color(0xFF94A3B8), style = MaterialTheme.typography.labelMedium)
                 Text(distance, color = zoneColor, fontWeight = FontWeight.Bold, style = MaterialTheme.typography.displaySmall)
             }
-            Text(source, color = Color(0xFFCBD5E1), style = MaterialTheme.typography.labelSmall)
+            Column(horizontalAlignment = Alignment.End) {
+                Text(source, color = Color(0xFFCBD5E1), style = MaterialTheme.typography.labelSmall)
+                val confidence = "${(reading.confidence * 100f).toInt()}% confidence"
+                Text(
+                    if (reading.isStable) "Filtered • $confidence" else "Stabilizing • $confidence",
+                    color = if (reading.isStable) Color(0xFF36D399) else Color(0xFFFACC15),
+                    style = MaterialTheme.typography.labelSmall,
+                )
+            }
         }
     }
 }

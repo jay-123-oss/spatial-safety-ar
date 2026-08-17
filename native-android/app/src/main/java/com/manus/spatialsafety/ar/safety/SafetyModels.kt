@@ -14,11 +14,14 @@ enum class ThreatZone(
     UNKNOWN("Scanning", 0xFF94A3B8.toInt(), -1),
 }
 
-/** Closest center-region depth estimate for the current tracked AR frame. */
+/** Robust closest-obstacle estimate for the current tracked AR frame. */
 data class ObstacleReading(
     val distanceMeters: Float? = null,
     val zone: ThreatZone = ThreatZone.UNKNOWN,
     val source: DistanceSource = DistanceSource.UNAVAILABLE,
+    val confidence: Float = 0f,
+    val sampleCount: Int = 0,
+    val isStable: Boolean = false,
 )
 
 enum class DistanceSource {
