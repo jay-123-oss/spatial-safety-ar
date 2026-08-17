@@ -45,4 +45,4 @@
 - [x] Simplify the Compose safety overlay to camera, threat status, distance, and performance only.
 - [x] Verify no scene-description or object-search controls or logic remain in the pure ARCore module.
 - [x] Build and test the refined feedback and UI implementation.
-- [ ] Push the verified feedback and UI refinement to the private repository's main branch.
+- [x] Push the verified feedback and UI refinement to the private repository's main branch.
