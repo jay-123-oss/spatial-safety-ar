@@ -4,6 +4,7 @@ import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.RectF
 import android.os.SystemClock
+import android.util.Log
 import androidx.camera.core.CameraSelector
 import androidx.camera.core.ImageAnalysis
 import androidx.camera.core.ImageProxy
@@ -40,8 +41,16 @@ data class Detection(val label: String, val confidence: Float, val box: RectF, v
 data class Track(val id: Int, val label: String, val confidence: Float, val box: RectF, val timestampNs: Long)
 data class Vec3(val x: Float, val y: Float, val z: Float) {
     operator fun minus(o: Vec3) = Vec3(x - o.x, y - o.y, z - o.z)
-    operator fun div(s: Float) = Vec3(x / s, y / s, z / s)
-    fun norm() = sqrt(x * x + y * y + z * z)
+    operator fun div(s: Float): Vec3 {
+        if (!s.isFinite() || s <= 0f) return Vec3(Float.NaN, Float.NaN, Float.NaN)
+        return Vec3(x / s, y / s, z / s)
+    }
+    fun isFinite() = x.isFinite() && y.isFinite() && z.isFinite()
+    fun norm(): Float? {
+        if (!isFinite()) return null
+        val value = sqrt(x * x + y * y + z * z)
+        return value.takeIf { it.isFinite() }
+    }
 }
 data class FusedObject(
     val id: Int, val classLabel: String, val boundingBox: RectF,
@@ -104,9 +113,16 @@ class TrinetraImageAnalyzer(
                 val bitmap = image.toBitmapForModel() // copy is released with image.close()
                 yoloJob = scope.launch(visionDispatcher) {
                     try {
-                        val detections = yolo.detect(bitmap, frame.cameraImageWidth, frame.cameraImageHeight, frame.timestampNs)
+                        val detections = yolo.detect(
+                            bitmap,
+                            frame.cameraImageWidth,
+                            frame.cameraImageHeight,
+                            frame.timestampNs,
+                        )
                         val tracks = tracker.update(detections, frame.timestampNs)
                         onObjects(fusion.fuse(tracks, frame))
+                    } catch (error: Throwable) {
+                        logThrottled("YOLO inference failed", error)
                     } finally {
                         bitmap.recycle()
                         yoloMutex.unlock()
@@ -114,12 +130,23 @@ class TrinetraImageAnalyzer(
                 }
             }
             // Never block CameraX waiting for inference; current tracks are emitted by the YOLO job.
-        } catch (_: Throwable) {
-            // Production code should report telemetry, but must not prevent close() below.
+        } catch (error: Throwable) {
+            logThrottled("Camera/fusion frame rejected; continuing with next frame", error)
         } finally {
             image.close()
         }
     }
+
+    @Volatile private var lastErrorLogMs = 0L
+    private fun logThrottled(message: String, error: Throwable) {
+        val now = SystemClock.elapsedRealtime()
+        if (now - lastErrorLogMs >= 5_000L) {
+            lastErrorLogMs = now
+            Log.e(TAG, message, error)
+        }
+    }
+
+    private companion object { const val TAG = "TrinetraAnalyzer" }
 }
 
 interface ArCoreFrameSource {
@@ -216,6 +243,11 @@ class YoloTflite(
         require(outputType == DataType.FLOAT32 || outputType == DataType.UINT8 || outputType == DataType.INT8) {
             "Unsupported YOLO output type: $outputType"
         }
+        if (outputType != DataType.FLOAT32) {
+            require(outputScale > 0f && outputScale.isFinite()) {
+                "Quantized YOLO output tensor has invalid scale: $outputScale"
+            }
+        }
         outputShape = outputTensor.shape()
         require(outputShape.size == 3 && outputShape[0] == 1) {
             "Expected YOLO output rank 3, got ${outputShape.contentToString()}"
@@ -253,8 +285,9 @@ class YoloTflite(
                     val score = value(c, i)
                     if (score > bestScore) { bestScore = score; bestClass = c - 4 }
                 }
-                if (bestClass < 0 || bestScore < confidenceThreshold) continue
+                if (bestClass < 0 || !bestScore.isFinite() || bestScore < confidenceThreshold) continue
                 var cx = value(0, i); var cy = value(1, i); var bw = value(2, i); var bh = value(3, i)
+                if (!cx.isFinite() || !cy.isFinite() || !bw.isFinite() || !bh.isFinite() || bw <= 0f || bh <= 0f) continue
                 // YOLO exports differ: some emit pixels in the input tensor space, others emit 0..1.
                 // Normalize only when the four box values clearly use the normalized convention.
                 if (maxOf(abs(cx), abs(cy), abs(bw), abs(bh)) <= 2f) {
@@ -281,9 +314,12 @@ class YoloTflite(
         val channels = intArrayOf(pixel shr 16 and 0xff, pixel shr 8 and 0xff, pixel and 0xff)
         for (channel in channels) when (inputType) {
             DataType.FLOAT32 -> input.putFloat(channel / 255f)
-            DataType.UINT8 -> input.put(channel.toByte())
+            DataType.UINT8 -> {
+                require(inputScale > 0f && inputScale.isFinite()) { "UINT8 input tensor has no quantization scale" }
+                input.put((channel / 255f / inputScale + inputZeroPoint).toInt().coerceIn(0, 255).toByte())
+            }
             DataType.INT8 -> {
-                require(inputScale > 0f) { "INT8 input tensor has no quantization scale" }
+                require(inputScale > 0f && inputScale.isFinite()) { "INT8 input tensor has no quantization scale" }
                 input.put((channel / 255f / inputScale + inputZeroPoint).toInt().coerceIn(-128, 127).toByte())
             }
             else -> error("Unsupported input type")
@@ -336,12 +372,19 @@ interface ByteTrackAdapter { fun update(detections: List<Detection>, timestampNs
 
 class SpatialFusion(private val medianRadiusPx: Int = 2) {
     fun fuse(tracks: List<Track>, frame: ArFrame): List<FusedObject> = tracks.mapNotNull { track ->
-        val x = track.box.centerX(); val y = track.box.centerY()
-        val depth = robustDepth(frame.depth, x, y) ?: return@mapNotNull null
-        if (depth <= 0f || depth.isNaN() || depth > 30f) return@mapNotNull null
+        val box = track.box
         val k = frame.intrinsics
+        if (!track.confidence.isFinite() || !frame.timestampNs.toFloat().isFinite() ||
+            !box.left.isFinite() || !box.top.isFinite() || !box.right.isFinite() || !box.bottom.isFinite() ||
+            !k.fx.isFinite() || !k.fy.isFinite() || !k.cx.isFinite() || !k.cy.isFinite() ||
+            k.fx <= 0f || k.fy <= 0f) return@mapNotNull null
+        val x = box.centerX(); val y = box.centerY()
+        if (!x.isFinite() || !y.isFinite()) return@mapNotNull null
+        val depth = robustDepth(frame.depth, x, y) ?: return@mapNotNull null
+        if (depth <= 0f || !depth.isFinite() || depth > 30f) return@mapNotNull null
         val position = Vec3((x - k.cx) * depth / k.fx, (y - k.cy) * depth / k.fy, depth)
-        FusedObject(track.id, track.label, track.box, position, position.norm(), track.confidence, track.timestampNs)
+        val distance = position.norm() ?: return@mapNotNull null
+        FusedObject(track.id, track.label, box, position, distance, track.confidence, track.timestampNs)
     }
     private fun robustDepth(d: DepthSampler, x: Float, y: Float): Float? {
         val samples = ArrayList<Float>()

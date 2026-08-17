@@ -5,6 +5,7 @@ import android.opengl.GLES11Ext
 import android.opengl.GLES20
 import android.opengl.GLSurfaceView
 import android.os.SystemClock
+import android.util.Log
 import com.google.ar.core.Frame
 import com.google.ar.core.Session
 import com.google.ar.core.TrackingState
@@ -34,6 +35,7 @@ class ArSafetyRenderer(
     private var session: Session? = null
     private var lastUiUpdateMs = 0L
     private var feedbackActive = false
+    private val latencyProfiler = FrameLatencyProfiler("ArSafety")
 
     fun setSession(arSession: Session) {
         session = arSession
@@ -62,7 +64,9 @@ class ArSafetyRenderer(
         val activeSession = session ?: return
         val performanceStats = performance.onFrame()
         try {
+            val updateStartNs = SystemClock.elapsedRealtimeNanos()
             val frame = activeSession.update()
+            latencyProfiler.record("arcore_update", SystemClock.elapsedRealtimeNanos() - updateStartNs)
             backgroundRenderer.draw(frame)
             val tracking = frame.camera.trackingState == TrackingState.TRACKING
             if (!tracking) {
@@ -71,7 +75,9 @@ class ArSafetyRenderer(
                 return
             }
 
+            val depthStartNs = SystemClock.elapsedRealtimeNanos()
             val reading = obstacleEngine.analyze(frame)
+            latencyProfiler.record("depth_fusion", SystemClock.elapsedRealtimeNanos() - depthStartNs)
             if (reading.zone == ThreatZone.UNKNOWN) {
                 resetFeedbackIfNeeded()
             } else {
@@ -120,6 +126,29 @@ class ArSafetyRenderer(
         session = null
         obstacleEngine.reset()
         resetFeedbackIfNeeded()
+    }
+}
+
+/** Emits aggregate timing once per interval; avoids logcat flooding while profiling 30 FPS. */
+private class FrameLatencyProfiler(private val tag: String) {
+    private val totalNs = HashMap<String, Long>()
+    private val maxNs = HashMap<String, Long>()
+    private val counts = HashMap<String, Int>()
+    private var lastReportMs = SystemClock.elapsedRealtime()
+
+    @Synchronized fun record(stage: String, durationNs: Long) {
+        if (durationNs < 0L) return
+        totalNs[stage] = (totalNs[stage] ?: 0L) + durationNs
+        maxNs[stage] = maxOf(maxNs[stage] ?: 0L, durationNs)
+        counts[stage] = (counts[stage] ?: 0) + 1
+        val now = SystemClock.elapsedRealtime()
+        if (now - lastReportMs < 2_000L) return
+        val report = counts.keys.sorted().joinToString(separator = " ") { key ->
+            val count = counts.getValue(key)
+            "$key=${totalNs.getValue(key) / count / 1_000_000L}ms(avg)/${maxNs.getValue(key) / 1_000_000L}ms(max)"
+        }
+        Log.i(tag, "latency_2s $report")
+        totalNs.clear(); maxNs.clear(); counts.clear(); lastReportMs = now
     }
 }
 
