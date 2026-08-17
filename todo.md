@@ -40,9 +40,18 @@
 - [x] Push the verified ARCore-only refactor to the private repository's main branch.
 
 - [x] Implement continuous rapid emergency vibration for Zone 4 with safe lifecycle cancellation.
-- [x] Add subtle warning tones for Zones 2–3 and a distinct clear/success chime for Zone 1.
-- [x] Add feedback state transition and cooldown logic to prevent tone and TTS spam.
+- [x] Add subtle warning tones for Zones 2–3 and a distinct clear/success tone for Zone 1.
+- [x] Add feedback state transition and cooldown logic to prevent tone spam.
 - [x] Simplify the Compose safety overlay to camera, threat status, distance, and performance only.
 - [x] Verify no scene-description or object-search controls or logic remain in the pure ARCore module.
 - [x] Build and test the refined feedback and UI implementation.
 - [x] Push the verified feedback and UI refinement to the private repository's main branch.
+
+- [x] Remove every remaining Text-to-Speech/TTS reference from the native Android module.
+- [x] Refine ToneGenerator-only clear and obstacle feedback without voice output.
+- [x] Implement confidence-aware center-weighted multi-point depth sampling with robust filtering.
+- [x] Add temporal smoothing and stable zone transitions to reduce depth noise and false positives.
+- [x] Verify continuous emergency vibration starts and cancels immediately on clear/turn-away states.
+- [x] Update UI and tests for distance stability, tone-only feedback, and no TTS behavior.
+- [x] Build, package, and validate the production-grade offline update.
+- [x] Push the verified update to the private repository's main branch.
