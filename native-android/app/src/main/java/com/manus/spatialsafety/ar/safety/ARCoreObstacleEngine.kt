@@ -221,16 +221,22 @@ class TemporalDepthFilter(
     private val closeAlpha: Float = 0.65f,
     private val farAlpha: Float = 0.35f,
 ) {
-    private val window = ArrayDeque<Float>()
+    init { require(windowSize in 3..32) { "windowSize must be between 3 and 32" } }
+    private val window = FloatArray(windowSize)
+    private val sorted = FloatArray(windowSize)
+    private var count = 0
+    private var writeIndex = 0
     private var smoothedDistance: Float? = null
 
     fun add(distanceMeters: Float): FilteredDepth {
         val value = distanceMeters.coerceIn(0.08f, 8f)
-        window.addLast(value)
-        while (window.size > windowSize) window.removeFirst()
+        window[writeIndex] = value
+        writeIndex = (writeIndex + 1) % windowSize
+        if (count < windowSize) count++
 
-        val sorted = window.toList().sorted()
-        val median = sorted[sorted.size / 2]
+        for (i in 0 until count) sorted[i] = window[i]
+        insertionSort(sorted, count)
+        val median = sorted[count / 2]
         val previous = smoothedDistance
         val alpha = when {
             previous == null -> 1f
@@ -238,16 +244,40 @@ class TemporalDepthFilter(
             else -> farAlpha
         }
         smoothedDistance = previous?.let { it + (median - it) * alpha } ?: median
-        val medianAbsoluteDeviation = sorted.map { abs(it - median) }.sorted()[sorted.size / 2]
-        val spread = sorted.last() - sorted.first()
-        val stable = window.size >= 3 &&
-            spread <= max(0.18f, median * 0.14f) &&
+        for (i in 0 until count) {
+            sorted[i] = abs(sorted[i] - median)
+        }
+        insertionSort(sorted, count)
+        val medianAbsoluteDeviation = sorted[count / 2]
+        // Recompute the spread from the original window without allocating a temporary List.
+        var minValue = Float.POSITIVE_INFINITY
+        var maxValue = Float.NEGATIVE_INFINITY
+        for (i in 0 until count) {
+            minValue = minOf(minValue, window[i])
+            maxValue = maxOf(maxValue, window[i])
+        }
+        val stable = count >= 3 &&
+            maxValue - minValue <= max(0.18f, median * 0.14f) &&
             medianAbsoluteDeviation <= max(0.10f, median * 0.07f)
         return FilteredDepth(smoothedDistance!!, stable)
     }
 
+    private fun insertionSort(values: FloatArray, size: Int) {
+        for (i in 1 until size) {
+            val current = values[i]
+            var j = i - 1
+            while (j >= 0 && values[j] > current) {
+                values[j + 1] = values[j]
+                j--
+            }
+            values[j + 1] = current
+        }
+    }
+
     fun reset() {
-        window.clear()
+        java.util.Arrays.fill(window, 0f)
+        count = 0
+        writeIndex = 0
         smoothedDistance = null
     }
 }

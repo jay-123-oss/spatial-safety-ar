@@ -6,7 +6,7 @@
 
 | File | Purpose |
 |---|---|
-| `app/build.gradle.kts` | Google ARCore, Jetpack Compose, coroutines और unit-test dependencies; ML dependencies नहीं |
+| `app/build.gradle.kts` | Google ARCore, Jetpack Compose, coroutines, TensorFlow Lite 2.13.0 और unit-test dependencies |
 | `AndroidManifest.xml` | Camera/vibration permissions और optional ARCore declaration |
 | `MainActivity.kt` | ARCore availability/install gate, permission flow, `Session` lifecycle, autofocus और automatic depth configuration |
 | `ar/ArSafetyRenderer.kt` | OpenGL ES live AR camera feed, `Session.update()` frame loop और pure depth-engine dispatch |
@@ -24,6 +24,23 @@
 | Turant Ruke | `< 1 m` | Red | Continuous rapid vibration until the path clears or tracking resets |
 
 The engine samples a confidence-aware 9×9 grid across the central field of each available Depth API image. It uses valid-sample coverage, center weighting and a weighted median instead of a single pixel, then applies a seven-frame temporal median with asymmetric smoothing. Closer readings respond faster; receding readings settle more gently. If ARCore has not produced a depth image yet, it evaluates high-confidence point-cloud samples in the same central field. Tone events run only on stable zone changes, meaningful approach or cooldown expiry; safe chimes run once when a prior hazard clears. Depth remains an estimate rather than a collision-avoidance guarantee.
+
+## YOLO quantization and runtime modes
+
+The `pipeline/TrinetraPipeline.kt` runtime supports three model modes through `YoloPrecision`: `FP16`, `INT8`, and `AUTO`. **FP16 is a model-conversion choice**, not a request to feed half-precision bytes to the Java interpreter; an FP16-weight model normally still exposes `FLOAT32` input and output. The runtime therefore preserves the same RGB normalization and verifies this contract at startup. `INT8` mode accepts only `INT8` or `UINT8` input tensors and reads both input and output quantization scale/zero-point metadata directly from the TFLite tensors. Quantized outputs are dequantized before confidence filtering, NMS, and box decoding, preventing a silent accuracy regression.
+
+Use representative calibration images for full integer conversion rather than synthetic or unrelated images. A typical offline conversion workflow is:
+
+```python
+converter.optimizations = [tf.lite.Optimize.DEFAULT]
+converter.representative_dataset = representative_dataset
+converter.target_spec.supported_ops = [tf.lite.OpsSet.TFLITE_BUILTINS_INT8]
+converter.inference_input_type = tf.int8
+converter.inference_output_type = tf.int8
+model = converter.convert()
+```
+
+For an accuracy-preserving rollout, benchmark the original float model, an FP16-weight model, and the calibrated INT8 model on the same labeled frames. Record mAP/precision/recall, false alerts per minute, median inference latency, p95 latency, and thermal behavior. Use `YoloPrecision.FP16` when accuracy is the priority and the device benefits from reduced model size, and use `YoloPrecision.INT8` only after its representative-set validation shows acceptable recall. The default constructor remains `AUTO` so the actual model metadata, rather than a filename assumption, controls input/output handling.
 
 ## Run instructions
 
