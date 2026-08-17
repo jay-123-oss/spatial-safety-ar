@@ -137,15 +137,35 @@ data class CameraIntrinsics(val fx: Float, val fy: Float, val cx: Float, val cy:
 
 // ---------- TFLite wrapper ----------
 
+data class DetectorTuning(
+    val confidenceThreshold: Float = 0.30f,
+    val iouThreshold: Float = 0.50f,
+) {
+    init {
+        require(confidenceThreshold in 0f..1f) { "confidenceThreshold must be between 0 and 1" }
+        require(iouThreshold in 0f..1f) { "iouThreshold must be between 0 and 1" }
+    }
+
+    companion object {
+        // Use only when recall is more important than false positives.
+        val HIGH_RECALL = DetectorTuning(confidenceThreshold = 0.22f, iouThreshold = 0.45f)
+        // Balanced starting point for the current safety detector.
+        val BALANCED = DetectorTuning(confidenceThreshold = 0.30f, iouThreshold = 0.50f)
+        // Use when duplicate/false detections are the dominant problem.
+        val HIGH_PRECISION = DetectorTuning(confidenceThreshold = 0.40f, iouThreshold = 0.55f)
+    }
+}
+
 class YoloTflite(
     context: Context,
     modelBytes: ByteBuffer,
     private val labels: List<String>,
     private val inputWidth: Int = 640,
     private val inputHeight: Int = 640,
-    private val confidenceThreshold: Float = 0.25f,
-    private val iouThreshold: Float = 0.45f,
+    private val tuning: DetectorTuning = DetectorTuning.BALANCED,
 ) : Closeable {
+    private val confidenceThreshold = tuning.confidenceThreshold
+    private val iouThreshold = tuning.iouThreshold
     private val delegate: AutoCloseable?
     private val interpreter: Interpreter
     private val inputType: DataType
