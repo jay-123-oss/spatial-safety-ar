@@ -38,3 +38,11 @@
 - [x] Update Compose dashboard for live camera preview, closest obstacle distance, threat state, and FPS.
 - [x] Build and test the pure ARCore app with no TensorFlow/LiteRT artifacts in the dependency graph.
 - [x] Push the verified ARCore-only refactor to the private repository's main branch.
+
+- [x] Implement continuous rapid emergency vibration for Zone 4 with safe lifecycle cancellation.
+- [x] Add subtle warning tones for Zones 2–3 and a distinct clear/success chime for Zone 1.
+- [x] Add feedback state transition and cooldown logic to prevent tone and TTS spam.
+- [x] Simplify the Compose safety overlay to camera, threat status, distance, and performance only.
+- [x] Verify no scene-description or object-search controls or logic remain in the pure ARCore module.
+- [x] Build and test the refined feedback and UI implementation.
+- [ ] Push the verified feedback and UI refinement to the private repository's main branch.

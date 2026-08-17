@@ -26,22 +26,17 @@ class ArSafetyRenderer(
     context: Context,
     private val onStateChanged: (SafetyUiState) -> Unit,
     private val onAlert: (AlertDecision) -> Unit,
+    private val onFeedbackReset: () -> Unit,
 ) : GLSurfaceView.Renderer, AutoCloseable {
     private val obstacleEngine = ARCoreObstacleEngine()
     private val performance = PerformanceMonitor(context)
     private val backgroundRenderer = CameraBackgroundRenderer()
     private var session: Session? = null
-    @Volatile private var scanningEnabled = true
     private var lastUiUpdateMs = 0L
+    private var feedbackActive = false
 
     fun setSession(arSession: Session) {
         session = arSession
-    }
-
-    fun setScanningEnabled(enabled: Boolean) {
-        scanningEnabled = enabled
-        obstacleEngine.reset()
-        if (!enabled) onStateChanged(SafetyUiState.paused())
     }
 
     override fun onSurfaceCreated(gl: GL10?, config: EGLConfig?) {
@@ -64,19 +59,35 @@ class ArSafetyRenderer(
             backgroundRenderer.draw(frame)
             val tracking = frame.camera.trackingState == TrackingState.TRACKING
             if (!tracking) {
+                resetFeedbackIfNeeded()
                 emitUiState(ObstacleReading(), tracking = false, performanceStats = performanceStats)
                 return
             }
-            if (!scanningEnabled) return
 
             val reading = obstacleEngine.analyze(frame)
-            obstacleEngine.nextAlert(reading)?.let(onAlert)
+            if (reading.zone == ThreatZone.UNKNOWN) {
+                resetFeedbackIfNeeded()
+            } else {
+                obstacleEngine.nextAlert(reading)?.let { decision ->
+                    onAlert(decision)
+                    feedbackActive = decision.zone != ThreatZone.SURAKSHIT
+                }
+            }
             emitUiState(reading, tracking = true, performanceStats = performanceStats)
         } catch (_: CameraNotAvailableException) {
+            resetFeedbackIfNeeded()
             onStateChanged(SafetyUiState.error("Camera unavailable. Reopen the safety view."))
         } catch (error: Exception) {
+            resetFeedbackIfNeeded()
             onStateChanged(SafetyUiState.error(error.message ?: "ARCore frame processing failed."))
         }
+    }
+
+    private fun resetFeedbackIfNeeded() {
+        if (!feedbackActive) return
+        obstacleEngine.reset()
+        onFeedbackReset()
+        feedbackActive = false
     }
 
     private fun emitUiState(
@@ -90,7 +101,6 @@ class ArSafetyRenderer(
         onStateChanged(
             SafetyUiState(
                 tracking = tracking,
-                paused = !scanningEnabled,
                 statusText = if (tracking) "Depth scanning" else "Finding tracking",
                 highestZone = reading.zone.takeUnless { it == ThreatZone.UNKNOWN } ?: ThreatZone.UNKNOWN,
                 reading = reading,
@@ -99,7 +109,7 @@ class ArSafetyRenderer(
         )
     }
 
-    override fun close() = Unit
+    override fun close() = resetFeedbackIfNeeded()
 }
 
 /** Minimal OpenGL ES 2.0 renderer for ARCore's camera external texture. */

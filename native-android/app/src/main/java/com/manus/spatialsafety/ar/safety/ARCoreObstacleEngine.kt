@@ -15,7 +15,7 @@ import kotlin.math.sqrt
  * back to center-field ARCore point-cloud samples. No ML model, detector, or network is used.
  */
 class ARCoreObstacleEngine(
-    private val analysisIntervalMs: Long = 90L,
+    private val analysisIntervalMs: Long = 0L,
     private val cooldownMs: Long = 2_000L,
     private val meaningfulApproachMeters: Float = 0.35f,
 ) {
@@ -51,16 +51,18 @@ class ARCoreObstacleEngine(
     @Synchronized
     fun nextAlert(reading: ObstacleReading, nowMs: Long = SystemClock.elapsedRealtime()): AlertDecision? {
         val distance = reading.distanceMeters ?: return null
-        if (reading.zone.priority < ThreatZone.CHETAAVNI.priority) {
+        if (reading.zone == ThreatZone.UNKNOWN) return null
+        if (reading.zone == ThreatZone.SURAKSHIT) {
+            val hadHazard = lastAlert != null
             lastAlert = null
-            return null
+            return if (hadHazard) AlertDecision(reading.zone, distance) else null
         }
 
         val previous = lastAlert
-        val escalated = previous == null || reading.zone.priority > previous.zone.priority
+        val zoneChanged = previous == null || reading.zone != previous.zone
         val approaching = previous != null && distance <= previous.distanceMeters - meaningfulApproachMeters
         val cooldownExpired = previous == null || nowMs - previous.emittedAtMs >= cooldownMs
-        if (!escalated && !approaching && !cooldownExpired) return null
+        if (!zoneChanged && !approaching && !cooldownExpired) return null
 
         lastAlert = AlertRecord(nowMs, reading.zone, distance)
         return AlertDecision(reading.zone, distance)

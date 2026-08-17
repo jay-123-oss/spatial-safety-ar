@@ -44,7 +44,6 @@ class MainActivity : ComponentActivity() {
     private lateinit var alertController: AlertController
     private var session: Session? = null
     private var installRequested = false
-    private var voiceEnabled by mutableStateOf(true)
 
     private val cameraPermissionRequest = registerForActivityResult(
         ActivityResultContracts.RequestPermission(),
@@ -73,12 +72,7 @@ class MainActivity : ComponentActivity() {
                             modifier = Modifier.fillMaxSize(),
                         )
                     }
-                    UIOverlayScreen(
-                        state = uiState,
-                        voiceEnabled = voiceEnabled,
-                        onToggleScanning = { renderer?.setScanningEnabled(uiState.paused) },
-                        onToggleVoice = { voiceEnabled = !voiceEnabled },
-                    )
+                    UIOverlayScreen(state = uiState)
                 }
             }
         }
@@ -166,7 +160,8 @@ class MainActivity : ComponentActivity() {
             ArSafetyRenderer(
                 applicationContext,
                 onStateChanged = { state.value = it },
-                onAlert = { decision -> alertController.playFeedback(decision, voiceEnabled) },
+                onAlert = alertController::playFeedback,
+                onFeedbackReset = alertController::cancelAllFeedback,
             )
         }.onSuccess { newRenderer ->
             renderer = newRenderer
@@ -177,7 +172,7 @@ class MainActivity : ComponentActivity() {
                 preserveEGLContextOnPause = true
             }
         }.onFailure { error ->
-            showStartupError("Detector initialization failed: ${error.message ?: "unknown error"}")
+            showStartupError("AR renderer initialization failed: ${error.message ?: "unknown error"}")
         }
     }
 

@@ -27,4 +27,23 @@ class ARCoreObstacleEngineTest {
         assertNull(engine.nextAlert(warning, nowMs = 10_500L))
         assertNotNull(engine.nextAlert(emergency, nowMs = 10_600L))
     }
+
+    @Test
+    fun `safe transition emits one clear event after a hazard`() {
+        val warning = ObstacleReading(3f, ThreatZone.CHETAAVNI, DistanceSource.DEPTH_IMAGE)
+        val safe = ObstacleReading(4.5f, ThreatZone.SURAKSHIT, DistanceSource.DEPTH_IMAGE)
+
+        assertNotNull(engine.nextAlert(warning, nowMs = 10_000L))
+        assertNotNull(engine.nextAlert(safe, nowMs = 10_100L))
+        assertNull(engine.nextAlert(safe, nowMs = 10_200L))
+    }
+
+    @Test
+    fun `deescalation emits immediate feedback to stop an emergency pattern`() {
+        val emergency = ObstacleReading(0.8f, ThreatZone.TURANT_RUKE, DistanceSource.DEPTH_IMAGE)
+        val caution = ObstacleReading(1.5f, ThreatZone.SAVDHAAN, DistanceSource.DEPTH_IMAGE)
+
+        assertNotNull(engine.nextAlert(emergency, nowMs = 10_000L))
+        assertNotNull(engine.nextAlert(caution, nowMs = 10_100L))
+    }
 }

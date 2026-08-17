@@ -10,20 +10,20 @@
 | `AndroidManifest.xml` | Camera/vibration permissions और optional ARCore declaration |
 | `MainActivity.kt` | ARCore availability/install gate, permission flow, `Session` lifecycle, autofocus और automatic depth configuration |
 | `ar/ArSafetyRenderer.kt` | OpenGL ES live AR camera feed, `Session.update()` frame loop और pure depth-engine dispatch |
-| `safety/ARCoreObstacleEngine.kt` | Center-region Depth API sampling, point-cloud fallback, zones, cooldown और escalation override |
-| `safety/AlertController.kt` | On-device TTS plus zone-specific `VibrationEffect` feedback and lifecycle cleanup |
-| `ui/UIOverlayScreen.kt` | Compose overlay with closest obstacle distance, threat color, depth source and FPS |
+| `safety/ARCoreObstacleEngine.kt` | Per-frame center-region Depth API sampling, point-cloud fallback, zone-transition events और cooldown logic |
+| `safety/AlertController.kt` | On-device tones, continuous Zone 4 `VibrationEffect`, TTS cooldown और lifecycle cleanup |
+| `ui/UIOverlayScreen.kt` | Button-free Compose overlay with closest distance, threat color, depth source and FPS |
 
 ## Safety policy
 
 | Zone | Distance | UI color | Feedback |
 |---|---:|---|---|
-| Surakshit | `> 4 m` | Green | Silent |
-| Chetaavni | `2.5–4 m` | Yellow | Light pulse |
-| Savdhaan | `1–2.5 m` | Orange | Medium directional-style pulse and local voice alert |
-| Turant Ruke | `< 1 m` | Red | Repeating urgent vibration and local voice alert |
+| Surakshit | `> 4 m` | Green | One short clear/success chime after a prior hazard clears |
+| Chetaavni | `2.5–4 m` | Yellow | Subtle short notification tone |
+| Savdhaan | `1–2.5 m` | Orange | Distinct short warning tone plus cooldown-limited local voice alert |
+| Turant Ruke | `< 1 m` | Red | Continuous rapid vibration plus cooldown-limited urgent local voice alert |
 
-The engine checks the central 24% of the Depth API image at a bounded cadence. It selects the nearest valid depth sample, because the closest object along the user’s forward path is the relevant safety signal. If ARCore has not produced a depth image yet, it evaluates high-confidence point-cloud samples in the same central field. Alert cooldown prevents repetitive audio; a closer distance or a more severe zone bypasses that cooldown.
+The engine samples the central 24% of each available Depth API image without machine-learning inference. It selects the nearest valid depth sample, because the closest object along the user’s forward path is the relevant safety signal. If ARCore has not produced a depth image yet, it evaluates high-confidence point-cloud samples in the same central field. Tone and speech events run only on zone changes, meaningful approach, or cooldown expiry; safe chimes run once when a prior hazard clears. Depth remains an estimate rather than a collision-avoidance guarantee.
 
 ## Run instructions
 
