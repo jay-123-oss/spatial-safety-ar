@@ -109,8 +109,14 @@ class TrinetraImageAnalyzer(
 
             // ARCore receives every analyzer frame. YOLO is independently throttled and latest-only.
             if (nowMs - lastYoloMs >= yoloPeriodMs && yoloMutex.tryLock()) {
+                val bitmap = try {
+                    image.toBitmapForModel() // copy is released with image.close()
+                } catch (error: Throwable) {
+                    yoloMutex.unlock()
+                    logThrottled("Camera conversion rejected; continuing with next frame", error)
+                    return
+                }
                 lastYoloMs = nowMs
-                val bitmap = image.toBitmapForModel() // copy is released with image.close()
                 yoloJob = scope.launch(visionDispatcher) {
                     try {
                         val detections = yolo.detect(
@@ -119,7 +125,13 @@ class TrinetraImageAnalyzer(
                             frame.cameraImageHeight,
                             frame.timestampNs,
                         )
-                        val tracks = tracker.update(detections, frame.timestampNs)
+                        val safeDetections = detections.filter { detection ->
+                            detection.confidence.isFinite() && detection.confidence >= 0f &&
+                                detection.box.left.isFinite() && detection.box.top.isFinite() &&
+                                detection.box.right.isFinite() && detection.box.bottom.isFinite() &&
+                                detection.box.right > detection.box.left && detection.box.bottom > detection.box.top
+                        }
+                        val tracks = tracker.update(safeDetections, frame.timestampNs)
                         onObjects(fusion.fuse(tracks, frame))
                     } catch (error: Throwable) {
                         logThrottled("YOLO inference failed", error)
