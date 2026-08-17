@@ -12,7 +12,7 @@
         android:theme="@style/Theme.SpatialSafety">
         <meta-data android:name="com.google.ar.core" android:value="optional" />
         <activity
-            android:name=".MainActivity"
+            android:name="com.manus.spatialsafety.ar.MainActivity"
             android:configChanges="keyboardHidden|orientation|screenSize"
             android:exported="true"
             android:screenOrientation="portrait">
