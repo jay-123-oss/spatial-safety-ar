@@ -19,3 +19,7 @@ Configure `SMOLVLM_ENDPOINT` and, when required, `SMOLVLM_API_KEY` as Android bu
 The default mobile profile requests **INT4 quantization**, limits generation to 160 tokens, downsizes the longest image edge to 768 pixels, uses JPEG quality 65, requests low image detail, and enforces a 1.2-second minimum frame interval. The `quantization` request field is a gateway hint; the configured SmolVLM2 serving stack must actually load an INT4/INT8/FP16 artifact for that hint to affect model execution.
 
 The offline `MockSmolVlmClient` includes deterministic scenarios for an open gutter, clear path, low-light uncertainty, a sudden approaching cyclist, and malformed model output. These cases exercise conservative movement guidance and cane-specific instructions without network access.
+
+## Online-to-depth fallback
+
+The online client is wrapped by `LatencyAwareSmolVlmClient`. If the VLM response does not arrive within the configured 1.5-second budget, or the request fails, the wrapper immediately generates guidance from the latest ARCore depth snapshot. A close obstacle produces an immediate stop command; a mid-range obstacle produces a cane sweep instruction; unavailable depth produces the conservative stay-in-place fallback. This keeps safety guidance available when network inference is slow or unavailable.

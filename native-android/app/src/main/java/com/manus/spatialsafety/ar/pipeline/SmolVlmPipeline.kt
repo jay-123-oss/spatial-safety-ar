@@ -10,6 +10,7 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withTimeoutOrNull
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.BufferedReader
@@ -42,7 +43,67 @@ data class SmolVlmConfig(
     val profile: SmolVlmMobileProfile = SmolVlmMobileProfile(),
     val connectTimeoutMs: Int = 5_000,
     val readTimeoutMs: Int = 20_000,
+    val networkLatencyBudgetMs: Long = 1_500L,
 )
+
+data class DepthSensorSnapshot(
+    val distanceMeters: Float? = null,
+    val confidence: Float = 0f,
+)
+
+fun interface DepthSensorFallback {
+    fun guidance(snapshot: DepthSensorSnapshot): SmolVlmResult
+}
+
+object ArCoreDepthSensorFallback : DepthSensorFallback {
+    override fun guidance(snapshot: DepthSensorSnapshot): SmolVlmResult {
+        val distance = snapshot.distanceMeters
+        return when {
+            distance == null || !distance.isFinite() -> VisualNavigationPrompt.SAFE_FALLBACK.copy(
+                environment = "AR depth sensor",
+                primaryHazard = "Unknown obstacle",
+                spatialReasoning = "Online visual inference exceeded its latency budget and depth is unavailable.",
+                actionCommand = "Stop immediately and remain in place. Sweep your cane slowly ahead while the depth view recovers.",
+            )
+            distance <= 0.8f -> SmolVlmResult(
+                environment = "AR depth sensor",
+                primaryHazard = "Nearby obstacle",
+                hazardPosition = "Directly ahead, ${"%.1f".format(distance)} meters away",
+                spatialReasoning = "The depth sensor reports an obstacle inside the immediate stopping distance.",
+                actionCommand = "Stop immediately. Use your cane to locate the obstacle before changing direction.",
+            )
+            distance <= 1.5f -> SmolVlmResult(
+                environment = "AR depth sensor",
+                primaryHazard = "Obstacle",
+                hazardPosition = "Directly ahead, ${"%.1f".format(distance)} meters away",
+                spatialReasoning = "The depth sensor reports a nearby obstacle, but no safe side to bypass it.",
+                actionCommand = "Pause. Sweep your cane left and right to find a clear path before moving.",
+            )
+            else -> SmolVlmResult(
+                environment = "AR depth sensor",
+                primaryHazard = "None",
+                hazardPosition = "Not applicable",
+                spatialReasoning = "The nearest depth reading is outside the immediate hazard range.",
+                actionCommand = "The immediate path is clear by depth sensing. Continue slowly and keep your cane sweeping.",
+            )
+        }
+    }
+}
+
+/** Uses online VLM only within the latency budget, then falls back to ARCore depth guidance. */
+class LatencyAwareSmolVlmClient(
+    private val online: SmolVlmClient,
+    private val fallback: DepthSensorFallback,
+    private val snapshotProvider: () -> DepthSensorSnapshot,
+    private val latencyBudgetMs: Long = 1_500L,
+) : SmolVlmClient {
+    override suspend fun analyzeJpeg(jpegBytes: ByteArray): SmolVlmResult {
+        val onlineResult = withTimeoutOrNull(latencyBudgetMs.coerceAtLeast(100L)) {
+            runCatching { online.analyzeJpeg(jpegBytes) }.getOrNull()
+        }
+        return onlineResult ?: fallback.guidance(snapshotProvider())
+    }
+}
 
 interface SmolVlmClient {
     suspend fun analyzeJpeg(jpegBytes: ByteArray): SmolVlmResult
@@ -165,10 +226,16 @@ class SmolVlmNavigationPipeline(
     config: SmolVlmConfig,
     scope: CoroutineScope,
     shouldInvoke: () -> Boolean,
+    depthSnapshot: () -> DepthSensorSnapshot = { DepthSensorSnapshot() },
 ) : AutoCloseable {
     private val tts = com.manus.spatialsafety.ar.safety.NavigationTtsController(context)
     private val analyzer = SmolVlmCameraAnalyzer(
-        client = OpenAiCompatibleSmolVlmClient(config),
+        client = LatencyAwareSmolVlmClient(
+            online = OpenAiCompatibleSmolVlmClient(config),
+            fallback = ArCoreDepthSensorFallback,
+            snapshotProvider = depthSnapshot,
+            latencyBudgetMs = config.networkLatencyBudgetMs,
+        ),
         scope = scope,
         shouldInvoke = shouldInvoke,
         onResult = tts::speak,

@@ -29,6 +29,7 @@ import com.google.ar.core.exceptions.UnavailableUserDeclinedInstallationExceptio
 import com.manus.spatialsafety.BuildConfig
 import com.manus.spatialsafety.ar.ar.ArSafetyRenderer
 import com.manus.spatialsafety.ar.pipeline.SmolVlmConfig
+import com.manus.spatialsafety.ar.pipeline.DepthSensorSnapshot
 import com.manus.spatialsafety.ar.pipeline.SmolVlmNavigationPipeline
 import com.manus.spatialsafety.ar.safety.AlertController
 import com.manus.spatialsafety.ar.safety.ThreatZone
@@ -72,6 +73,12 @@ class MainActivity : ComponentActivity() {
                 shouldInvoke = {
                     val zone = state.value.highestZone
                     zone == ThreatZone.UNKNOWN || zone == ThreatZone.TURANT_RUKE
+                },
+                depthSnapshot = {
+                    DepthSensorSnapshot(
+                        distanceMeters = state.value.reading.distanceMeters,
+                        confidence = state.value.reading.confidence,
+                    )
                 },
             )
         }
