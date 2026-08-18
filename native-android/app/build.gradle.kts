@@ -10,9 +10,6 @@ val localConfig = Properties().apply {
     val localFile = rootProject.file("local.properties")
     if (localFile.exists()) localFile.inputStream().use { load(it) }
 }
-val smolVlmEndpoint = localConfig.getProperty("smolvlm.endpoint", "")
-val smolVlmApiKey = localConfig.getProperty("smolvlm.apiKey", "")
-
 android {
     namespace = "com.manus.spatialsafety"
     compileSdk = 35
@@ -32,8 +29,6 @@ android {
         targetSdk = 35
         versionCode = 2
         versionName = "0.2.0"
-        buildConfigField("String", "SMOLVLM_ENDPOINT", "\"${smolVlmEndpoint.replace("\\\"", "\\\\\\\"")}\"")
-        buildConfigField("String", "SMOLVLM_API_KEY", "\"${smolVlmApiKey.replace("\\\"", "\\\\\\\"")}\"")
     }
 
     buildFeatures {

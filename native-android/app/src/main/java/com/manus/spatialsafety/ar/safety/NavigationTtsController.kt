@@ -5,6 +5,7 @@ import android.os.Handler
 import android.os.Looper
 import android.speech.tts.TextToSpeech
 import com.manus.spatialsafety.ar.pipeline.SmolVlmResult
+import com.manus.spatialsafety.ar.pipeline.toTtsText
 import java.util.Locale
 
 /** Owns spoken navigation output; spatial reasoning and every other field remain silent. */
@@ -22,11 +23,11 @@ class NavigationTtsController(context: Context) : AutoCloseable, TextToSpeech.On
         }
     }
 
-    /** Speaks only the validated five-field response's action_command. */
+    /** Speaks only the validated concise contextual description; safety warnings remain authoritative elsewhere. */
     fun speak(result: SmolVlmResult) {
         mainHandler.post {
             if (!ready) return@post
-            tts.speak(result.actionCommand, TextToSpeech.QUEUE_FLUSH, null, UTTERANCE_ID)
+            tts.speak(result.toTtsText(), TextToSpeech.QUEUE_FLUSH, null, UTTERANCE_ID)
         }
     }
 

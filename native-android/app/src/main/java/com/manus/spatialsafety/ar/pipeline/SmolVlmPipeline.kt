@@ -47,6 +47,7 @@ data class SmolVlmConfig(
     val connectTimeoutMs: Int = 5_000,
     val readTimeoutMs: Int = 20_000,
     val networkLatencyBudgetMs: Long = 1_500L,
+    val triggerConfig: VlmTriggerConfig = VlmTriggerConfig(),
 )
 
 data class DepthSensorSnapshot(
@@ -63,31 +64,25 @@ object ArCoreDepthSensorFallback : DepthSensorFallback {
         val distance = snapshot.distanceMeters
         return when {
             distance == null || !distance.isFinite() -> VisualNavigationPrompt.SAFE_FALLBACK.copy(
-                environment = "AR depth sensor",
-                primaryHazard = "Unknown obstacle",
-                spatialReasoning = "Online visual inference exceeded its latency budget and depth is unavailable.",
-                actionCommand = "Stop immediately and remain in place. Sweep your cane slowly ahead while the depth view recovers.",
+                scene = "AR depth sensor",
+                description = "The visual model is unavailable and depth is unavailable. The safety layer remains in control.",
             )
             distance <= 0.8f -> SmolVlmResult(
-                environment = "AR depth sensor",
-                primaryHazard = "Nearby obstacle",
-                hazardPosition = "Directly ahead, ${"%.1f".format(distance)} meters away",
-                spatialReasoning = "The depth sensor reports an obstacle inside the immediate stopping distance.",
-                actionCommand = "Stop immediately. Use your cane to locate the obstacle before changing direction.",
+                scene = "AR depth sensor",
+                importantObjects = listOf(VlmObject("nearby obstacle", 1f, "front", "depth candidate")),
+                unknownObjects = emptyList(), pathStatus = "blocked", sceneChange = false,
+                description = "A nearby obstacle is directly ahead at ${"%.1f".format(distance)} meters.", uncertainty = "low",
             )
             distance <= 1.5f -> SmolVlmResult(
-                environment = "AR depth sensor",
-                primaryHazard = "Obstacle",
-                hazardPosition = "Directly ahead, ${"%.1f".format(distance)} meters away",
-                spatialReasoning = "The depth sensor reports a nearby obstacle, but no safe side to bypass it.",
-                actionCommand = "Pause. Sweep your cane left and right to find a clear path before moving.",
+                scene = "AR depth sensor",
+                importantObjects = listOf(VlmObject("obstacle", 1f, "front", "depth candidate")),
+                unknownObjects = emptyList(), pathStatus = "partially_blocked", sceneChange = false,
+                description = "A nearby obstacle is directly ahead at ${"%.1f".format(distance)} meters.", uncertainty = "medium",
             )
             else -> SmolVlmResult(
-                environment = "AR depth sensor",
-                primaryHazard = "None",
-                hazardPosition = "Not applicable",
-                spatialReasoning = "The nearest depth reading is outside the immediate hazard range.",
-                actionCommand = "The immediate path is clear by depth sensing. Continue slowly and keep your cane sweeping.",
+                scene = "AR depth sensor", importantObjects = emptyList(), unknownObjects = emptyList(),
+                pathStatus = "clear", sceneChange = false,
+                description = "The immediate path is clear by depth sensing.", uncertainty = "medium",
             )
         }
     }
@@ -248,20 +243,29 @@ class SmolVlmNavigationPipeline(
     context: android.content.Context,
     config: SmolVlmConfig,
     scope: CoroutineScope,
-    shouldInvoke: () -> Boolean,
+    perceptionContext: () -> PerceptionContext,
     depthSnapshot: () -> DepthSensorSnapshot = { DepthSensorSnapshot() },
 ) : AutoCloseable {
     private val tts = com.manus.spatialsafety.ar.safety.NavigationTtsController(context)
+    private val localEngine: VisionLanguageModel = SmolVlmEngine(MissingLocalModelRuntime())
+    private val router = VlmRouter(config = config.triggerConfig)
     private val analyzer = SmolVlmCameraAnalyzer(
         client = LatencyAwareSmolVlmClient(
-            online = if (config.endpoint.isBlank()) DisabledSmolVlmClient() else OpenAiCompatibleSmolVlmClient(config),
+            online = LocalSmolVlmClient(localEngine) {
+                VlmInputContext(perception = perceptionContext())
+            },
             fallback = ArCoreDepthSensorFallback,
             snapshotProvider = depthSnapshot,
             latencyBudgetMs = config.networkLatencyBudgetMs,
         ),
         scope = scope,
-        shouldInvoke = shouldInvoke,
-        onResult = tts::speak,
+        shouldInvoke = {
+            router.request(perceptionContext(), android.os.SystemClock.elapsedRealtime()).enabled
+        },
+        onResult = { result ->
+            router.complete()
+            tts.speak(result)
+        },
         minIntervalMs = config.profile.frameIntervalMs,
         jpegQuality = config.profile.jpegQuality,
         maxImageEdgePx = config.profile.maxImageEdgePx,
@@ -273,6 +277,7 @@ class SmolVlmNavigationPipeline(
     override fun close() {
         camera.close()
         analyzer.close()
+        localEngine.release()
         tts.close()
     }
 }

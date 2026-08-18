@@ -8,61 +8,38 @@ import org.junit.Test
 
 class LatencyAwareSmolVlmClientTest {
     private val onlineResult = SmolVlmResult(
-        environment = "Indoor hallway",
-        primaryHazard = "None",
-        hazardPosition = "Not applicable",
-        spatialReasoning = "The online VLM found no immediate obstacle.",
-        actionCommand = "The path is clear. Continue walking straight.",
+        scene = "Indoor hallway",
+        importantObjects = emptyList(),
+        unknownObjects = emptyList(),
+        pathStatus = "clear",
+        sceneChange = false,
+        description = "The online VLM found no immediate obstacle.",
+        uncertainty = "low",
     )
 
     @Test
     fun fastOnlineResponseWinsWithinLatencyBudget() = runBlocking {
-        val client = LatencyAwareSmolVlmClient(
-            online = FakeClient(onlineResult, delayMs = 5),
-            fallback = ArCoreDepthSensorFallback,
-            snapshotProvider = { DepthSensorSnapshot(distanceMeters = 0.4f) },
-            latencyBudgetMs = 100,
-        )
-
-        val result = client.analyzeJpeg(byteArrayOf(1))
-
-        assertEquals(onlineResult, result)
+        val client = LatencyAwareSmolVlmClient(FakeClient(onlineResult, 5), ArCoreDepthSensorFallback, { DepthSensorSnapshot(0.4f) }, 100)
+        assertEquals(onlineResult, client.analyzeJpeg(byteArrayOf(1)))
     }
 
     @Test
     fun slowOnlineResponseFallsBackToDepthSensor() = runBlocking {
-        val client = LatencyAwareSmolVlmClient(
-            online = FakeClient(onlineResult, delayMs = 250),
-            fallback = ArCoreDepthSensorFallback,
-            snapshotProvider = { DepthSensorSnapshot(distanceMeters = 0.4f) },
-            latencyBudgetMs = 30,
-        )
-
+        val client = LatencyAwareSmolVlmClient(FakeClient(onlineResult, 250), ArCoreDepthSensorFallback, { DepthSensorSnapshot(0.4f) }, 30)
         val result = client.analyzeJpeg(byteArrayOf(2))
-
-        assertEquals("Nearby obstacle", result.primaryHazard)
-        assertTrue(result.actionCommand.startsWith("Stop immediately"))
+        assertEquals("blocked", result.pathStatus)
+        assertTrue(result.description.contains("obstacle"))
     }
 
     @Test
     fun unavailableDepthUsesConservativeFallback() = runBlocking {
-        val client = LatencyAwareSmolVlmClient(
-            online = FakeClient(onlineResult, delayMs = 250),
-            fallback = ArCoreDepthSensorFallback,
-            snapshotProvider = { DepthSensorSnapshot(distanceMeters = null) },
-            latencyBudgetMs = 30,
-        )
-
+        val client = LatencyAwareSmolVlmClient(FakeClient(onlineResult, 250), ArCoreDepthSensorFallback, { DepthSensorSnapshot(null) }, 30)
         val result = client.analyzeJpeg(byteArrayOf(3))
-
-        assertEquals("Unknown obstacle", result.primaryHazard)
-        assertTrue(result.actionCommand.contains("remain in place"))
+        assertEquals("AR depth sensor", result.scene)
+        assertEquals("high", result.uncertainty)
     }
 
-    private class FakeClient(
-        private val result: SmolVlmResult,
-        private val delayMs: Long,
-    ) : SmolVlmClient {
+    private class FakeClient(private val result: SmolVlmResult, private val delayMs: Long) : SmolVlmClient {
         override suspend fun analyzeJpeg(jpegBytes: ByteArray): SmolVlmResult {
             delay(delayMs)
             return result

@@ -27,10 +27,10 @@ import com.google.ar.core.exceptions.UnavailableArcoreNotInstalledException
 import com.google.ar.core.exceptions.UnavailableDeviceNotCompatibleException
 import com.google.ar.core.exceptions.UnavailableSdkTooOldException
 import com.google.ar.core.exceptions.UnavailableUserDeclinedInstallationException
-import com.manus.spatialsafety.BuildConfig
 import com.manus.spatialsafety.ar.ar.ArSafetyRenderer
 import com.manus.spatialsafety.ar.pipeline.SmolVlmConfig
 import com.manus.spatialsafety.ar.pipeline.DepthSensorSnapshot
+import com.manus.spatialsafety.ar.pipeline.PerceptionContext
 import com.manus.spatialsafety.ar.pipeline.SmolVlmNavigationPipeline
 import com.manus.spatialsafety.ar.safety.AlertController
 import com.manus.spatialsafety.ar.safety.ThreatZone
@@ -63,21 +63,20 @@ open class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         alertController = AlertController(applicationContext)
-        if (BuildConfig.SMOLVLM_ENDPOINT.isNotBlank()) {
-            Log.i(TAG, "SmolVLM2 online pipeline enabled endpoint=${BuildConfig.SMOLVLM_ENDPOINT}")
-        } else {
-            Log.w(TAG, "SmolVLM2 endpoint empty; starting ARCore depth-only fallback mode")
-        }
+        Log.i(TAG, "SmolVLM2 local engine configured; model load is lazy and safety remains on YOLO/ARCore")
         vlmPipeline = SmolVlmNavigationPipeline(
             context = applicationContext,
-            config = SmolVlmConfig(
-                endpoint = BuildConfig.SMOLVLM_ENDPOINT,
-                apiKey = BuildConfig.SMOLVLM_API_KEY.takeIf { it.isNotBlank() },
-            ),
+            config = SmolVlmConfig(endpoint = ""),
             scope = lifecycleScope,
-            shouldInvoke = {
-                val zone = state.value.highestZone
-                zone == ThreatZone.UNKNOWN || zone == ThreatZone.TURANT_RUKE
+            perceptionContext = {
+                val current = state.value
+                PerceptionContext(
+                    yoloConfidence = current.reading.confidence.takeIf { it > 0f },
+                    unknownObject = current.highestZone == ThreatZone.UNKNOWN,
+                    detectionsUnstable = !current.reading.isStable,
+                    safetyCritical = current.highestZone == ThreatZone.TURANT_RUKE,
+                    depthDistanceMeters = current.reading.distanceMeters,
+                )
             },
             depthSnapshot = {
                 DepthSensorSnapshot(

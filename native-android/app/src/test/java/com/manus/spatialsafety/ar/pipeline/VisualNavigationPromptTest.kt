@@ -6,84 +6,42 @@ import org.junit.Test
 
 class VisualNavigationPromptTest {
     @Test
-    fun parsesExactFiveFieldSchema() {
-        val result = VisualNavigationPrompt.parse(
-            """
-            {
-              "environment":"Outdoor street",
-              "primary_hazard":"Approaching bike",
-              "hazard_position":"From 12 o'clock, 2 meters ahead",
-              "spatial_reasoning":"The bike is moving toward the user, so forward movement is unsafe.",
-              "action_command":"Stop immediately. Take one step back and wait for the bike to pass."
-            }
-            """.trimIndent(),
-        )
-
-        assertEquals("Outdoor street", result.environment)
-        assertEquals("Approaching bike", result.primaryHazard)
-        assertEquals("From 12 o'clock, 2 meters ahead", result.hazardPosition)
-        assertTrue(result.spatialReasoning.contains("unsafe"))
-        assertEquals("Stop immediately. Take one step back and wait for the bike to pass.", result.toTtsText())
+    fun parsesStructuredMasterPromptResponse() {
+        val result = VisualNavigationPrompt.parse(MockSmolVlmClient.DEFAULT_HAZARD_RESPONSE)
+        assertEquals("Uneven footpath", result.scene)
+        assertEquals("open gutter", result.importantObjects.single().name)
+        assertEquals("front", result.importantObjects.single().position)
+        assertEquals("blocked", result.pathStatus)
+        assertEquals(result.description, result.toTtsText())
     }
 
     @Test
     fun malformedJsonReturnsSafeFallback() {
-        val result = VisualNavigationPrompt.parse(
-            "{\"environment\":\"Outdoor street\",\"primary_hazard\":\"Bike\"",
-        )
-
-        assertEquals(VisualNavigationPrompt.SAFE_FALLBACK, result)
+        assertEquals(VisualNavigationPrompt.SAFE_FALLBACK, VisualNavigationPrompt.parse("{broken"))
     }
 
     @Test
-    fun missingRequiredFieldReturnsSafeFallback() {
-        val result = VisualNavigationPrompt.parse(
-            """
-            {
-              "environment":"Indoor hallway",
-              "primary_hazard":"None",
-              "hazard_position":"Not applicable",
-              "action_command":"The path is clear. Continue walking straight."
-            }
-            """.trimIndent(),
-        )
-
-        assertEquals(VisualNavigationPrompt.SAFE_FALLBACK, result)
+    fun missingFieldReturnsSafeFallback() {
+        val missing = """{"scene":"Hallway","important_objects":[],"unknown_objects":[],"path_status":"clear","scene_change":false,"description":"Clear."}"""
+        assertEquals(VisualNavigationPrompt.SAFE_FALLBACK, VisualNavigationPrompt.parse(missing))
     }
 
     @Test
-    fun extraFieldReturnsSafeFallbackBecauseSchemaIsExact() {
-        val result = VisualNavigationPrompt.parse(
-            """
-            {
-              "environment":"Open walkway",
-              "primary_hazard":"None",
-              "hazard_position":"Not applicable",
-              "spatial_reasoning":"The path is clear.",
-              "action_command":"Continue walking straight.",
-              "path_status":"CLEAR"
-            }
-            """.trimIndent(),
-        )
-
-        assertEquals(VisualNavigationPrompt.SAFE_FALLBACK, result)
+    fun extraFieldReturnsSafeFallback() {
+        val extra = MockSmolVlmClient.DEFAULT_CLEAR_RESPONSE.trim().dropLast(1).plus(",\"extra\":true}")
+        assertEquals(VisualNavigationPrompt.SAFE_FALLBACK, VisualNavigationPrompt.parse(extra))
     }
 
     @Test
-    fun environmentOverThreeWordsReturnsSafeFallback() {
-        val result = VisualNavigationPrompt.parse(
-            """{"environment":"Busy outdoor city intersection","primary_hazard":"None","hazard_position":"Not applicable","spatial_reasoning":"The path is clear.","action_command":"Continue walking straight."}""",
-        )
-
-        assertEquals(VisualNavigationPrompt.SAFE_FALLBACK, result)
+    fun invalidPositionAndConfidenceReturnSafeFallback() {
+        val invalid = """{"scene":"Road","important_objects":[{"name":"car","confidence":1.5,"position":"nearby","relation":"blocking"}],"unknown_objects":[],"path_status":"blocked","scene_change":false,"description":"A car blocks the path.","uncertainty":"low"}"""
+        assertEquals(VisualNavigationPrompt.SAFE_FALLBACK, VisualNavigationPrompt.parse(invalid))
     }
 
     @Test
-    fun actionCommandOverTwoSentencesReturnsSafeFallback() {
-        val result = VisualNavigationPrompt.parse(
-            """{"environment":"Open walkway","primary_hazard":"None","hazard_position":"Not applicable","spatial_reasoning":"The path is clear.","action_command":"Stop. Turn left. Walk straight."}""",
-        )
-
-        assertEquals(VisualNavigationPrompt.SAFE_FALLBACK, result)
+    fun lowLightResponseRetainsHighUncertainty() {
+        val result = VisualNavigationPrompt.parse(MockSmolVlmClient.LOW_LIGHT_RESPONSE)
+        assertEquals("high", result.uncertainty)
+        assertTrue(result.description.contains("dark"))
     }
 }

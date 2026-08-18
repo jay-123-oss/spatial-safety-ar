@@ -1,25 +1,44 @@
-# Trinetra SmolVLM2 Navigation Contract
+# Trinetra Offline VLM Contract
 
-The hybrid pipeline sends selected CameraX frames to a configured SmolVLM2-compatible gateway when deterministic AR/YOLO state is unknown or high-risk. The model response must contain **exactly five JSON fields**. The mobile parser rejects malformed, incomplete, extra-field, overlong, or invalid responses and returns a conservative fallback.
+The VLM is a **secondary cognition layer**. The runtime architecture remains CameraX → YOLO11n/tracking → ARCore/Depth → Safety Engine → `VlmRouter` → local SmolVLM2-500M only when an event trigger fires. Immediate collision, braking, emergency, and dangerous-navigation decisions remain in the Safety Engine.
 
-| Field | Requirement |
-|---|---|
-| `environment` | Scene description of at most three words. |
-| `primary_hazard` | Most dangerous object, or `None`. |
-| `hazard_position` | Relative position using steps, meters, or clock-face direction. |
-| `spatial_reasoning` | Concise internal spatial explanation; never spoken to the user. |
-| `action_command` | Polite TTS-ready command with at most two sentences. This is the only spoken field. |
+## Local model abstraction
 
-The Android implementation is split into `SmolVlmCameraAnalyzer` for latest-frame CameraX capture and JPEG encoding, `OpenAiCompatibleSmolVlmClient` for the multimodal request, `VisualNavigationPrompt.parse` for strict validation, and `NavigationTtsController` for speaking only `action_command`.
+`VisionLanguageModel` defines initialization, readiness/state, image-plus-context analysis, and release. `SmolVlmEngine` implements the lifecycle and is replaceable by future Moondream, PaliGemma, or Qwen engines. The current build contains an explicit `MissingLocalModelRuntime` until the SmolVLM2-500M Android runtime and model artifact are supplied; in that state the app remains functional through YOLO, ARCore/Depth, and the safety fallback.
 
-Configure `SMOLVLM_ENDPOINT` and, when required, `SMOLVLM_API_KEY` as Android build fields. The defaults are empty, which keeps the network pipeline disabled until a real gateway is configured.
+## Event-driven routing
 
-## Mobile latency profile
+`VlmTriggerManager` supports configurable low-confidence, unknown/unstable detection, scene-change, complex-scene, and user-query triggers. `VlmRouter` enforces safety-critical bypass, cooldown, single-flight processing, and no unbounded queue. Normal scenes keep VLM off.
 
-The default mobile profile requests **INT4 quantization**, limits generation to 160 tokens, downsizes the longest image edge to 768 pixels, uses JPEG quality 65, requests low image detail, and enforces a 1.2-second minimum frame interval. The `quantization` request field is a gateway hint; the configured SmolVLM2 serving stack must actually load an INT4/INT8/FP16 artifact for that hint to affect model execution.
+## Structured output
 
-The offline `MockSmolVlmClient` includes deterministic scenarios for an open gutter, clear path, low-light uncertainty, a sudden approaching cyclist, and malformed model output. These cases exercise conservative movement guidance and cane-specific instructions without network access.
+The local model must return exactly this JSON shape:
 
-## Online-to-depth fallback
+```json
+{
+  "scene": "outdoor walking path",
+  "important_objects": [
+    {
+      "name": "motorcycle",
+      "confidence": 0.86,
+      "position": "front-right",
+      "relation": "partially blocking path"
+    }
+  ],
+  "unknown_objects": [],
+  "path_status": "partially_blocked",
+  "scene_change": false,
+  "description": "A motorcycle is partially blocking the walking path.",
+  "uncertainty": "low"
+}
+```
 
-The online client is wrapped by `LatencyAwareSmolVlmClient`. If the VLM response does not arrive within the configured 1.5-second budget, or the request fails, the wrapper immediately generates guidance from the latest ARCore depth snapshot. A close obstacle produces an immediate stop command; a mid-range obstacle produces a cane sweep instruction; unavailable depth produces the conservative stay-in-place fallback. This keeps safety guidance available when network inference is slow or unavailable.
+The parser rejects malformed JSON, missing or extra fields, invalid positions, invalid confidence values, invalid path status, and overlong descriptions. It returns a conservative fallback rather than crashing. TTS speaks only the validated concise `description`; safety warnings from the Safety Engine retain higher priority.
+
+## Offline guarantee
+
+The Android manifest does not request `INTERNET`, and the active runtime does not upload camera frames. No cloud endpoint or API key is used. `native-android/local.properties.example` documents only local SDK/model setup. The debug log reports explicit VLM lifecycle state and keeps the YOLO/ARCore safety path active if the local model is unavailable.
+
+## Verification
+
+Unit coverage includes normal-scene VLM-off routing, low-confidence and user-query triggers, safety-critical bypass, cooldown/single-flight behavior, strict schema parsing, malformed and missing fields, low-light uncertainty, sudden obstacles, and local depth fallback behavior.

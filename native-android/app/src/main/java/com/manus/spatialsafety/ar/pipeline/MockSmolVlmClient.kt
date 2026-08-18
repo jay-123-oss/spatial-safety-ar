@@ -10,49 +10,21 @@ class MockSmolVlmClient(
 
     override suspend fun analyzeJpeg(jpegBytes: ByteArray): SmolVlmResult {
         requestCount += 1
-        val response = responseQueue.removeFirstOrNull() ?: DEFAULT_CLEAR_RESPONSE
-        return VisualNavigationPrompt.parse(response)
+        return VisualNavigationPrompt.parse(responseQueue.removeFirstOrNull() ?: DEFAULT_CLEAR_RESPONSE)
     }
 
     companion object {
         const val DEFAULT_HAZARD_RESPONSE = """
-        {
-          "environment":"Uneven footpath",
-          "primary_hazard":"Open gutter",
-          "hazard_position":"Directly beneath your next step",
-          "spatial_reasoning":"The pavement ends at an open gutter, so stepping forward without checking the gap is dangerous.",
-          "action_command":"Stop immediately. Sweep your cane down to measure the gap before moving."
-        }
+        {"scene":"Uneven footpath","important_objects":[{"name":"open gutter","confidence":0.98,"position":"front","relation":"blocking the next step"}],"unknown_objects":[],"path_status":"blocked","scene_change":false,"description":"An open gutter is directly ahead and blocks the next step.","uncertainty":"low"}
         """
-
         const val LOW_LIGHT_RESPONSE = """
-        {
-          "environment":"Dark corridor",
-          "primary_hazard":"Unknown obstacle",
-          "hazard_position":"Directly ahead, position uncertain",
-          "spatial_reasoning":"The scene is low light and object boundaries are unreliable, so forward movement cannot be confirmed safe.",
-          "action_command":"Stop immediately. Sweep your cane slowly ahead and wait for a clearer view before moving."
-        }
+        {"scene":"Dark corridor","important_objects":[],"unknown_objects":["unknown obstacle"],"path_status":"uncertain","scene_change":false,"description":"The scene is too dark to confirm a safe path.","uncertainty":"high"}
         """
-
         const val SUDDEN_OBSTACLE_RESPONSE = """
-        {
-          "environment":"Busy sidewalk",
-          "primary_hazard":"Moving cyclist",
-          "hazard_position":"At your 11 o'clock, one step ahead",
-          "spatial_reasoning":"A cyclist has entered the immediate trajectory, creating an urgent collision risk.",
-          "action_command":"Stop immediately. Take one step back and wait for the cyclist to pass."
-        }
+        {"scene":"Busy sidewalk","important_objects":[{"name":"moving cyclist","confidence":0.91,"position":"front-right","relation":"entering the walking path"}],"unknown_objects":[],"path_status":"partially_blocked","scene_change":true,"description":"A moving cyclist has entered the walking path on the front-right.","uncertainty":"low"}
         """
-
         const val DEFAULT_CLEAR_RESPONSE = """
-        {
-          "environment":"Open walkway",
-          "primary_hazard":"None",
-          "hazard_position":"Not applicable",
-          "spatial_reasoning":"There are no obstacles or surface issues in the immediate path.",
-          "action_command":"The path is clear. Continue walking straight at your normal pace."
-        }
+        {"scene":"Open walkway","important_objects":[],"unknown_objects":[],"path_status":"clear","scene_change":false,"description":"The immediate path is clear.","uncertainty":"low"}
         """
     }
 }
