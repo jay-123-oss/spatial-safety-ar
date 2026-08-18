@@ -20,7 +20,7 @@ import kotlin.math.sqrt
  * reading has enough spatial and temporal agreement.
  */
 class ARCoreObstacleEngine(
-    private val analysisIntervalMs: Long = 0L,
+    private val analysisIntervalMs: Long = 50L,
     private val cooldownMs: Long = 2_000L,
     private val meaningfulApproachMeters: Float = 0.35f,
     private val temporalFilter: TemporalDepthFilter = TemporalDepthFilter(),
@@ -45,7 +45,9 @@ class ARCoreObstacleEngine(
         if (nowMs - lastAnalysisAtMs < analysisIntervalMs) return lastReading
         lastAnalysisAtMs = nowMs
 
-        val candidate = sampleCenterDepth(frame) ?: sampleCenterPointCloud(frame)
+        // Point cloud avoids the device-specific spherical-rectifier path that can emit
+        // repeated native errors on phones whose depth image calibration is unavailable.
+        val candidate = sampleCenterPointCloud(frame) ?: sampleCenterDepth(frame)
         if (candidate == null) {
             temporalFilter.reset()
             lastReading = ObstacleReading()

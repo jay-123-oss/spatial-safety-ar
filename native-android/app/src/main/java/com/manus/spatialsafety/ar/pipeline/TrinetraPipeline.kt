@@ -500,7 +500,12 @@ class SmartAlertManager(
     }
     private fun speak(text: String) { tts.speak(text, android.speech.tts.TextToSpeech.QUEUE_FLUSH, null, text) }
     private fun vibrate(pattern: LongArray, repeat: Int) {
-        vibrator.vibrate(android.os.VibrationEffect.createWaveform(pattern, repeat))
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
+            vibrator.vibrate(android.os.VibrationEffect.createWaveform(pattern, repeat))
+        } else {
+            @Suppress("DEPRECATION")
+            vibrator.vibrate(pattern, repeat)
+        }
     }
     override fun close() { vibrator.cancel(); tts.stop(); tts.shutdown() }
 }

@@ -12,18 +12,11 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withTimeoutOrNull
-import org.json.JSONArray
-import org.json.JSONObject
-import java.io.BufferedReader
 import java.io.ByteArrayOutputStream
-import java.io.InputStreamReader
-import android.util.Base64
-import java.net.HttpURLConnection
-import java.net.URL
 
 private const val VLM_TAG = "TrinetraSmolVlm"
 
-/** Configuration for an OpenAI-compatible SmolVLM2 gateway. Keep credentials off-device when possible. */
+/** Configuration for the local SmolVLM2 engine and bounded inference path. */
 enum class SmolVlmQuantization(val wireName: String) {
     INT4("int4"),
     INT8("int8"),
@@ -40,13 +33,9 @@ data class SmolVlmMobileProfile(
 )
 
 data class SmolVlmConfig(
-    val endpoint: String,
-    val apiKey: String? = null,
     val model: String = VisualNavigationPrompt.MODEL_ID,
     val profile: SmolVlmMobileProfile = SmolVlmMobileProfile(),
-    val connectTimeoutMs: Int = 5_000,
-    val readTimeoutMs: Int = 20_000,
-    val networkLatencyBudgetMs: Long = 1_500L,
+    val inferenceTimeoutMs: Long = 1_500L,
     val triggerConfig: VlmTriggerConfig = VlmTriggerConfig(),
 )
 
@@ -111,69 +100,6 @@ private fun safeLogWarning(message: String) {
 
 interface SmolVlmClient {
     suspend fun analyzeJpeg(jpegBytes: ByteArray): SmolVlmResult
-}
-
-/** Explicit offline mode; the latency wrapper immediately selects depth fallback. */
-class DisabledSmolVlmClient : SmolVlmClient {
-    override suspend fun analyzeJpeg(jpegBytes: ByteArray): SmolVlmResult {
-        error("SmolVLM2 endpoint is not configured")
-    }
-}
-
-/** Calls a server-side SmolVLM2 endpoint using the OpenAI-compatible vision message format. */
-class OpenAiCompatibleSmolVlmClient(
-    private val config: SmolVlmConfig,
-) : SmolVlmClient {
-    override suspend fun analyzeJpeg(jpegBytes: ByteArray): SmolVlmResult = kotlinx.coroutines.withContext(Dispatchers.IO) {
-        Log.i(VLM_TAG, "VLM request start model=${config.model} quantization=${config.profile.quantization.wireName} imageBytes=${jpegBytes.size}")
-        val connection = (URL(config.endpoint).openConnection() as HttpURLConnection).apply {
-            requestMethod = "POST"
-            connectTimeout = config.connectTimeoutMs
-            readTimeout = config.readTimeoutMs
-            doOutput = true
-            setRequestProperty("Content-Type", "application/json")
-            config.apiKey?.takeIf { it.isNotBlank() }?.let { setRequestProperty("Authorization", "Bearer $it") }
-        }
-        try {
-            val request = JSONObject()
-                .put("model", config.model)
-                .put("temperature", 0)
-                .put("max_tokens", config.profile.maxTokens)
-                // The gateway must honor this provider-specific hint when loading SmolVLM2.
-                .put("quantization", config.profile.quantization.wireName)
-                .put("image_detail", "low")
-                .put("messages", JSONArray().put(
-                    JSONObject()
-                        .put("role", "user")
-                        .put("content", JSONArray()
-                            .put(JSONObject().put("type", "text").put("text", VisualNavigationPrompt.SYSTEM_PROMPT))
-                            .put(JSONObject().put("type", "image_url").put(
-                                "image_url", JSONObject().put("url", "data:image/jpeg;base64,${Base64.encodeToString(jpegBytes, Base64.NO_WRAP)}"),
-                            )),
-                        ),
-                ))
-            connection.outputStream.use { it.write(request.toString().toByteArray(Charsets.UTF_8)) }
-            val responseText = BufferedReader(InputStreamReader(
-                if (connection.responseCode in 200..299) connection.inputStream else connection.errorStream,
-                Charsets.UTF_8,
-            )).use { it.readText() }
-            if (connection.responseCode !in 200..299) {
-                Log.e(VLM_TAG, "VLM HTTP failure status=${connection.responseCode}")
-                return@withContext VisualNavigationPrompt.SAFE_FALLBACK
-            }
-            val content = JSONObject(responseText)
-                .getJSONArray("choices")
-                .getJSONObject(0)
-                .getJSONObject("message")
-                .getString("content")
-            VisualNavigationPrompt.parse(content)
-        } catch (error: Exception) {
-            Log.e(VLM_TAG, "VLM request or response parsing failed", error)
-            VisualNavigationPrompt.SAFE_FALLBACK
-        } finally {
-            connection.disconnect()
-        }
-    }
 }
 
 /** CameraX analyzer that sends only selected latest frames to SmolVLM2. */
@@ -256,7 +182,7 @@ class SmolVlmNavigationPipeline(
             },
             fallback = ArCoreDepthSensorFallback,
             snapshotProvider = depthSnapshot,
-            latencyBudgetMs = config.networkLatencyBudgetMs,
+            latencyBudgetMs = config.inferenceTimeoutMs,
         ),
         scope = scope,
         shouldInvoke = {
@@ -270,12 +196,10 @@ class SmolVlmNavigationPipeline(
         jpegQuality = config.profile.jpegQuality,
         maxImageEdgePx = config.profile.maxImageEdgePx,
     )
-    private val camera = TrinetraCameraController(context, analyzer)
-
-    fun bind(owner: androidx.lifecycle.LifecycleOwner) = camera.bind(owner)
+    /** CameraX is intentionally not bound here: ARCore owns the camera session. */
+    fun analyzer(): ImageAnalysis.Analyzer = analyzer
 
     override fun close() {
-        camera.close()
         analyzer.close()
         localEngine.release()
         tts.close()

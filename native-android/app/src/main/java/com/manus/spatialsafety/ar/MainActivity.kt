@@ -63,10 +63,10 @@ open class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         alertController = AlertController(applicationContext)
-        Log.i(TAG, "SmolVLM2 local engine configured; model load is lazy and safety remains on YOLO/ARCore")
+        Log.w(TAG, "SmolVLM2 local engine boundary is configured, but no bundled .litertlm model artifact is present; depth safety fallback remains active")
         vlmPipeline = SmolVlmNavigationPipeline(
             context = applicationContext,
-            config = SmolVlmConfig(endpoint = ""),
+            config = SmolVlmConfig(),
             scope = lifecycleScope,
             perceptionContext = {
                 val current = state.value
@@ -170,7 +170,6 @@ open class MainActivity : ComponentActivity() {
             renderer?.setSession(session ?: error("ARCore session was not created"))
             session?.resume()
             glSurfaceView?.onResume()
-            vlmPipeline?.bind(this)
         } catch (_: UnavailableArcoreNotInstalledException) {
             showStartupError("Google Play Services for AR is not installed.")
         } catch (_: UnavailableApkTooOldException) {
