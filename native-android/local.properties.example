@@ -1,0 +1,5 @@
+# Copy these entries into local.properties for a configured debug build.
+# local.properties itself is ignored and must not be committed.
+sdk.dir=/absolute/path/to/android-sdk
+smolvlm.endpoint=https://your-smolvlm-gateway.example/v1/chat/completions
+smolvlm.apiKey=replace-with-local-secret

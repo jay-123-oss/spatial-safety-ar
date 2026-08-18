@@ -1,6 +1,7 @@
 package com.manus.spatialsafety.ar.pipeline
 
 import android.graphics.Bitmap
+import android.util.Log
 import androidx.camera.core.ImageAnalysis
 import androidx.camera.core.ImageProxy
 import kotlinx.coroutines.CoroutineDispatcher
@@ -16,9 +17,11 @@ import org.json.JSONObject
 import java.io.BufferedReader
 import java.io.ByteArrayOutputStream
 import java.io.InputStreamReader
+import android.util.Base64
 import java.net.HttpURLConnection
 import java.net.URL
-import android.util.Base64
+
+private const val VLM_TAG = "TrinetraSmolVlm"
 
 /** Configuration for an OpenAI-compatible SmolVLM2 gateway. Keep credentials off-device when possible. */
 enum class SmolVlmQuantization(val wireName: String) {
@@ -101,12 +104,25 @@ class LatencyAwareSmolVlmClient(
         val onlineResult = withTimeoutOrNull(latencyBudgetMs.coerceAtLeast(100L)) {
             runCatching { online.analyzeJpeg(jpegBytes) }.getOrNull()
         }
-        return onlineResult ?: fallback.guidance(snapshotProvider())
+        if (onlineResult != null) return onlineResult
+        safeLogWarning("Online VLM exceeded ${latencyBudgetMs}ms or failed; switching to depth fallback")
+        return fallback.guidance(snapshotProvider())
     }
+}
+
+private fun safeLogWarning(message: String) {
+    runCatching { Log.w(VLM_TAG, message) }
 }
 
 interface SmolVlmClient {
     suspend fun analyzeJpeg(jpegBytes: ByteArray): SmolVlmResult
+}
+
+/** Explicit offline mode; the latency wrapper immediately selects depth fallback. */
+class DisabledSmolVlmClient : SmolVlmClient {
+    override suspend fun analyzeJpeg(jpegBytes: ByteArray): SmolVlmResult {
+        error("SmolVLM2 endpoint is not configured")
+    }
 }
 
 /** Calls a server-side SmolVLM2 endpoint using the OpenAI-compatible vision message format. */
@@ -114,6 +130,7 @@ class OpenAiCompatibleSmolVlmClient(
     private val config: SmolVlmConfig,
 ) : SmolVlmClient {
     override suspend fun analyzeJpeg(jpegBytes: ByteArray): SmolVlmResult = kotlinx.coroutines.withContext(Dispatchers.IO) {
+        Log.i(VLM_TAG, "VLM request start model=${config.model} quantization=${config.profile.quantization.wireName} imageBytes=${jpegBytes.size}")
         val connection = (URL(config.endpoint).openConnection() as HttpURLConnection).apply {
             requestMethod = "POST"
             connectTimeout = config.connectTimeoutMs
@@ -145,14 +162,18 @@ class OpenAiCompatibleSmolVlmClient(
                 if (connection.responseCode in 200..299) connection.inputStream else connection.errorStream,
                 Charsets.UTF_8,
             )).use { it.readText() }
-            if (connection.responseCode !in 200..299) return@withContext VisualNavigationPrompt.SAFE_FALLBACK
+            if (connection.responseCode !in 200..299) {
+                Log.e(VLM_TAG, "VLM HTTP failure status=${connection.responseCode}")
+                return@withContext VisualNavigationPrompt.SAFE_FALLBACK
+            }
             val content = JSONObject(responseText)
                 .getJSONArray("choices")
                 .getJSONObject(0)
                 .getJSONObject("message")
                 .getString("content")
             VisualNavigationPrompt.parse(content)
-        } catch (_: Exception) {
+        } catch (error: Exception) {
+            Log.e(VLM_TAG, "VLM request or response parsing failed", error)
             VisualNavigationPrompt.SAFE_FALLBACK
         } finally {
             connection.disconnect()
@@ -182,6 +203,7 @@ class SmolVlmCameraAnalyzer(
             return
         }
         lastSubmittedAtMs = now
+        Log.d(VLM_TAG, "Submitting selected camera frame to SmolVLM2")
         activeJob = scope.launch(dispatcher) {
             mutex.withLock {
                 try {
@@ -189,7 +211,8 @@ class SmolVlmCameraAnalyzer(
                     val jpeg = bitmap.toJpegBytes(jpegQuality, maxImageEdgePx)
                     bitmap.recycle()
                     onResult(client.analyzeJpeg(jpeg))
-                } catch (_: Exception) {
+                } catch (error: Exception) {
+                    Log.e(VLM_TAG, "Camera frame could not be submitted to VLM", error)
                     onResult(VisualNavigationPrompt.SAFE_FALLBACK)
                 } finally {
                     image.close()
@@ -231,7 +254,7 @@ class SmolVlmNavigationPipeline(
     private val tts = com.manus.spatialsafety.ar.safety.NavigationTtsController(context)
     private val analyzer = SmolVlmCameraAnalyzer(
         client = LatencyAwareSmolVlmClient(
-            online = OpenAiCompatibleSmolVlmClient(config),
+            online = if (config.endpoint.isBlank()) DisabledSmolVlmClient() else OpenAiCompatibleSmolVlmClient(config),
             fallback = ArCoreDepthSensorFallback,
             snapshotProvider = depthSnapshot,
             latencyBudgetMs = config.networkLatencyBudgetMs,

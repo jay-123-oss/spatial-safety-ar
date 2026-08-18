@@ -4,6 +4,7 @@ import android.Manifest
 import android.content.pm.PackageManager
 import android.opengl.GLSurfaceView
 import android.os.Bundle
+import android.util.Log
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
@@ -43,7 +44,7 @@ import androidx.lifecycle.lifecycleScope
  * are ready. Every startup failure becomes a visible Compose fallback state instead of a process
  * crash, so the app remains open even on unsupported or partially configured devices.
  */
-class MainActivity : ComponentActivity() {
+open class MainActivity : ComponentActivity() {
     private val state = MutableStateFlow(SafetyUiState())
     private var glSurfaceView by mutableStateOf<GLSurfaceView?>(null)
     private var renderer: ArSafetyRenderer? = null
@@ -63,25 +64,28 @@ class MainActivity : ComponentActivity() {
         enableEdgeToEdge()
         alertController = AlertController(applicationContext)
         if (BuildConfig.SMOLVLM_ENDPOINT.isNotBlank()) {
-            vlmPipeline = SmolVlmNavigationPipeline(
-                context = applicationContext,
-                config = SmolVlmConfig(
-                    endpoint = BuildConfig.SMOLVLM_ENDPOINT,
-                    apiKey = BuildConfig.SMOLVLM_API_KEY.takeIf { it.isNotBlank() },
-                ),
-                scope = lifecycleScope,
-                shouldInvoke = {
-                    val zone = state.value.highestZone
-                    zone == ThreatZone.UNKNOWN || zone == ThreatZone.TURANT_RUKE
-                },
-                depthSnapshot = {
-                    DepthSensorSnapshot(
-                        distanceMeters = state.value.reading.distanceMeters,
-                        confidence = state.value.reading.confidence,
-                    )
-                },
-            )
+            Log.i(TAG, "SmolVLM2 online pipeline enabled endpoint=${BuildConfig.SMOLVLM_ENDPOINT}")
+        } else {
+            Log.w(TAG, "SmolVLM2 endpoint empty; starting ARCore depth-only fallback mode")
         }
+        vlmPipeline = SmolVlmNavigationPipeline(
+            context = applicationContext,
+            config = SmolVlmConfig(
+                endpoint = BuildConfig.SMOLVLM_ENDPOINT,
+                apiKey = BuildConfig.SMOLVLM_API_KEY.takeIf { it.isNotBlank() },
+            ),
+            scope = lifecycleScope,
+            shouldInvoke = {
+                val zone = state.value.highestZone
+                zone == ThreatZone.UNKNOWN || zone == ThreatZone.TURANT_RUKE
+            },
+            depthSnapshot = {
+                DepthSensorSnapshot(
+                    distanceMeters = state.value.reading.distanceMeters,
+                    confidence = state.value.reading.confidence,
+                )
+            },
+        )
 
         setContent {
             val uiState by state.collectAsState()
@@ -230,4 +234,6 @@ class MainActivity : ComponentActivity() {
         session = null
         super.onDestroy()
     }
+
+    private companion object { const val TAG = "TrinetraMainActivity" }
 }

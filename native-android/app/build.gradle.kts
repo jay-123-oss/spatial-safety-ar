@@ -1,8 +1,17 @@
+import java.util.Properties
+
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
     id("org.jetbrains.kotlin.plugin.compose")
 }
+
+val localConfig = Properties().apply {
+    val localFile = rootProject.file("local.properties")
+    if (localFile.exists()) localFile.inputStream().use { load(it) }
+}
+val smolVlmEndpoint = localConfig.getProperty("smolvlm.endpoint", "")
+val smolVlmApiKey = localConfig.getProperty("smolvlm.apiKey", "")
 
 android {
     namespace = "com.manus.spatialsafety"
@@ -21,10 +30,10 @@ android {
         applicationId = "com.manus.spatialsafety"
         minSdk = 24
         targetSdk = 35
-        versionCode = 1
-        versionName = "0.1.0"
-        buildConfigField("String", "SMOLVLM_ENDPOINT", "\"\"")
-        buildConfigField("String", "SMOLVLM_API_KEY", "\"\"")
+        versionCode = 2
+        versionName = "0.2.0"
+        buildConfigField("String", "SMOLVLM_ENDPOINT", "\"${smolVlmEndpoint.replace("\\\"", "\\\\\\\"")}\"")
+        buildConfigField("String", "SMOLVLM_API_KEY", "\"${smolVlmApiKey.replace("\\\"", "\\\\\\\"")}\"")
     }
 
     buildFeatures {
