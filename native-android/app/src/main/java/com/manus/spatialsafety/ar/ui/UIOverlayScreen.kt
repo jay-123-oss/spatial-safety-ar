@@ -26,6 +26,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import com.manus.spatialsafety.ar.safety.CompactSafetyState
 import com.manus.spatialsafety.ar.safety.DistanceSource
 import com.manus.spatialsafety.ar.safety.ObstacleReading
 import com.manus.spatialsafety.ar.safety.ThreatZone
@@ -37,6 +38,10 @@ data class SafetyUiState(
     val statusText: String = "Preparing AR session",
     val highestZone: ThreatZone = ThreatZone.UNKNOWN,
     val reading: ObstacleReading = ObstacleReading(),
+    val safety: CompactSafetyState = CompactSafetyState(),
+    val depthStatus: String = "STARTING",
+    val detectorStatus: String = "MODEL MISSING",
+    val vlmStatus: String = "MODEL MISSING",
     val performance: PerformanceStats = PerformanceStats(),
     val errorMessage: String? = null,
 ) {
@@ -57,6 +62,8 @@ fun UIOverlayScreen(state: SafetyUiState) {
                 .padding(horizontal = 16.dp, vertical = 18.dp),
         ) {
             StatusCard(state, zoneColor)
+            Spacer(Modifier.height(10.dp))
+            SafetySummaryCard(state.safety, zoneColor)
             Spacer(Modifier.height(10.dp))
             DistanceCard(state.reading, zoneColor)
             Spacer(Modifier.height(10.dp))
@@ -92,9 +99,32 @@ private fun StatusCard(state: SafetyUiState, zoneColor: Color) {
                 Column {
                     Text(state.highestZone.hindiLabel, color = Color.White, fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleMedium)
                     Text(state.statusText, color = Color(0xFF94A3B8), style = MaterialTheme.typography.labelMedium)
+                    Text(
+                        "Depth ${state.depthStatus} • Detector ${state.detectorStatus} • VLM ${state.vlmStatus}",
+                        color = Color(0xFF64748B),
+                        style = MaterialTheme.typography.labelSmall,
+                    )
                 }
             }
             Text(if (state.tracking) "TRACKING" else "WAIT", color = zoneColor, fontWeight = FontWeight.Bold, style = MaterialTheme.typography.labelSmall)
+        }
+    }
+}
+
+@Composable
+private fun SafetySummaryCard(safety: CompactSafetyState, zoneColor: Color) {
+    val path = safety.pathStatus.name.replace('_', ' ')
+    val distance = safety.distanceMeters?.let { String.format("%.1f m", it) } ?: "—"
+    val position = safety.position.name.lowercase()
+    Card(colors = CardDefaults.cardColors(containerColor = Color(0xD9071019)), shape = RoundedCornerShape(16.dp)) {
+        Column(Modifier.fillMaxWidth().padding(horizontal = 18.dp, vertical = 12.dp)) {
+            Text("PATH", color = Color(0xFF94A3B8), style = MaterialTheme.typography.labelMedium)
+            Text(path, color = zoneColor, fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleLarge)
+            Text(
+                "${safety.hazard ?: "No immediate hazard"} • $distance • $position • ${safety.action.name}",
+                color = Color(0xFFCBD5E1),
+                style = MaterialTheme.typography.labelSmall,
+            )
         }
     }
 }
@@ -139,6 +169,7 @@ private fun PerformanceStrip(stats: PerformanceStats) {
         Metric("FPS", stats.fps.toString())
         Metric("Battery", stats.batteryPercent?.let { "$it%" } ?: "—")
         Metric("CPU", stats.cpuPercent?.let { "$it%" } ?: "—")
+        Metric("RAM", stats.ramMb?.let { "${it}MB" } ?: "—")
         Metric("GPU", stats.gpuText)
     }
 }

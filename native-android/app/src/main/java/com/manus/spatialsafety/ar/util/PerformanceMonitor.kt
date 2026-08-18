@@ -10,7 +10,13 @@ data class PerformanceStats(
     val fps: Int = 0,
     val batteryPercent: Int? = null,
     val cpuPercent: Int? = null,
+    val ramMb: Int? = null,
     val gpuText: String = "N/A",
+    val depthFps: Int? = null,
+    val detectorFps: Int? = null,
+    val detectorLatencyMs: Long? = null,
+    val vlmLatencyMs: Long? = null,
+    val droppedFrames: Long = 0L,
 )
 
 /** Process-time CPU estimate plus rendered FPS. Android has no portable public GPU-load percentage. */
@@ -23,6 +29,8 @@ class PerformanceMonitor(private val context: Context) {
     private var cachedBattery: Int? = null
     private var lastBatteryReadMs = 0L
     private var cachedCpu: Int? = null
+    private var cachedRamMb: Int? = null
+    private var lastRamReadMs = 0L
 
     fun onFrame(): PerformanceStats {
         frameCount += 1
@@ -50,6 +58,18 @@ class PerformanceMonitor(private val context: Context) {
                 ?.takeIf { it in 0..100 }
             lastBatteryReadMs = now
         }
-        return PerformanceStats(fps, cachedBattery, cachedCpu, "N/A")
+        if (cachedRamMb == null || now - lastRamReadMs >= 500L) {
+            val memoryInfo = android.os.Debug.MemoryInfo()
+            android.os.Debug.getMemoryInfo(memoryInfo)
+            cachedRamMb = (memoryInfo.totalPss / 1024).takeIf { it >= 0 }
+            lastRamReadMs = now
+        }
+        return PerformanceStats(
+            fps = fps,
+            batteryPercent = cachedBattery,
+            cpuPercent = cachedCpu,
+            ramMb = cachedRamMb,
+            gpuText = "N/A",
+        )
     }
 }

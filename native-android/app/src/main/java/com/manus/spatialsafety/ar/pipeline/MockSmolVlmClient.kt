@@ -1,6 +1,6 @@
 package com.manus.spatialsafety.ar.pipeline
 
-/** Deterministic offline client for development and AR navigation simulation. */
+/** Deterministic offline client for unit tests only; never used as production inference. */
 class MockSmolVlmClient(
     responses: List<String> = listOf(DEFAULT_HAZARD_RESPONSE),
 ) : SmolVlmClient {
@@ -15,16 +15,16 @@ class MockSmolVlmClient(
 
     companion object {
         const val DEFAULT_HAZARD_RESPONSE = """
-        {"scene":"Uneven footpath","important_objects":[{"name":"open gutter","confidence":0.98,"position":"front","relation":"blocking the next step"}],"unknown_objects":[],"path_status":"blocked","scene_change":false,"description":"An open gutter is directly ahead and blocks the next step.","uncertainty":"low"}
+        {"path_status":"blocked","hazard":"obstacle","position":"center","description":"An open drain blocks the walking path ahead. Stop.","confidence":0.98,"uncertainty":"low"}
         """
         const val LOW_LIGHT_RESPONSE = """
-        {"scene":"Dark corridor","important_objects":[],"unknown_objects":["unknown obstacle"],"path_status":"uncertain","scene_change":false,"description":"The scene is too dark to confirm a safe path.","uncertainty":"high"}
+        {"path_status":"uncertain","hazard":"unknown","position":"unknown","description":"The scene is too dark to confirm a safe path. Stop and wait.","confidence":0.25,"uncertainty":"high"}
         """
         const val SUDDEN_OBSTACLE_RESPONSE = """
-        {"scene":"Busy sidewalk","important_objects":[{"name":"moving cyclist","confidence":0.91,"position":"front-right","relation":"entering the walking path"}],"unknown_objects":[],"path_status":"partially_blocked","scene_change":true,"description":"A moving cyclist has entered the walking path on the front-right.","uncertainty":"low"}
+        {"path_status":"partially_blocked","hazard":"vehicle","position":"right","description":"A moving vehicle is entering the walking path from the right. Stop.","confidence":0.91,"uncertainty":"low"}
         """
         const val DEFAULT_CLEAR_RESPONSE = """
-        {"scene":"Open walkway","important_objects":[],"unknown_objects":[],"path_status":"clear","scene_change":false,"description":"The immediate path is clear.","uncertainty":"low"}
+        {"path_status":"clear","hazard":"none","position":"unknown","description":"The immediate walking path is clear.","confidence":0.91,"uncertainty":"low"}
         """
     }
 }

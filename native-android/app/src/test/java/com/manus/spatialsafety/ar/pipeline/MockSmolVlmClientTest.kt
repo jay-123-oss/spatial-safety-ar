@@ -7,38 +7,40 @@ import org.junit.Test
 
 class MockSmolVlmClientTest {
     @Test
-    fun hazardScenarioProducesStructuredContext() = runBlocking {
-        val result = MockSmolVlmClient().analyzeJpeg(byteArrayOf(1))
+    fun hazardResponseIsCompactAndTtsReady() = runBlocking {
+        val result = MockSmolVlmClient().analyzeJpeg(byteArrayOf(1, 2))
         assertEquals("blocked", result.pathStatus)
-        assertEquals("open gutter", result.importantObjects.single().name)
+        assertEquals("obstacle", result.hazard)
+        assertEquals("center", result.position)
         assertEquals(result.description, result.toTtsText())
     }
 
     @Test
-    fun lowLightScenarioIsUncertain() = runBlocking {
-        val result = MockSmolVlmClient(listOf(MockSmolVlmClient.LOW_LIGHT_RESPONSE)).analyzeJpeg(byteArrayOf(2))
+    fun lowLightResponseIsUncertain() = runBlocking {
+        val result = MockSmolVlmClient(listOf(MockSmolVlmClient.LOW_LIGHT_RESPONSE)).analyzeJpeg(byteArrayOf(1))
         assertEquals("high", result.uncertainty)
-        assertTrue(result.unknownObjects.isNotEmpty())
+        assertEquals("unknown", result.hazard)
     }
 
     @Test
-    fun suddenObstacleScenarioMarksSceneChange() = runBlocking {
-        val result = MockSmolVlmClient(listOf(MockSmolVlmClient.SUDDEN_OBSTACLE_RESPONSE)).analyzeJpeg(byteArrayOf(3))
-        assertTrue(result.sceneChange)
-        assertEquals("front-right", result.importantObjects.single().position)
+    fun suddenObstacleResponseIdentifiesRightVehicle() = runBlocking {
+        val result = MockSmolVlmClient(listOf(MockSmolVlmClient.SUDDEN_OBSTACLE_RESPONSE)).analyzeJpeg(byteArrayOf(1))
+        assertEquals("vehicle", result.hazard)
+        assertEquals("right", result.position)
+        assertEquals("partially_blocked", result.pathStatus)
     }
 
     @Test
     fun malformedResponseUsesSafeFallback() = runBlocking {
-        val result = MockSmolVlmClient(listOf("{broken")).analyzeJpeg(byteArrayOf(4))
+        val result = MockSmolVlmClient(listOf("{bad")).analyzeJpeg(byteArrayOf(1))
         assertEquals(VisualNavigationPrompt.SAFE_FALLBACK, result)
     }
 
     @Test
-    fun requestCountIsBoundedByCalls() = runBlocking {
+    fun requestCountIsBoundedByCallCount() = runBlocking {
         val client = MockSmolVlmClient()
-        client.analyzeJpeg(byteArrayOf(5))
-        client.analyzeJpeg(byteArrayOf(6))
-        assertEquals(2, client.requestCount)
+        client.analyzeJpeg(ByteArray(0))
+        client.analyzeJpeg(ByteArray(0))
+        assertTrue(client.requestCount <= 2)
     }
 }

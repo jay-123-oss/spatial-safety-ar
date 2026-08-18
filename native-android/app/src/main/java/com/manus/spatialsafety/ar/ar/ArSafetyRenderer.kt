@@ -11,6 +11,7 @@ import com.google.ar.core.Session
 import com.google.ar.core.TrackingState
 import com.google.ar.core.exceptions.CameraNotAvailableException
 import com.manus.spatialsafety.ar.safety.ARCoreObstacleEngine
+import com.manus.spatialsafety.ar.safety.SafetyFusion
 import com.manus.spatialsafety.ar.safety.AlertDecision
 import com.manus.spatialsafety.ar.safety.ObstacleReading
 import com.manus.spatialsafety.ar.safety.ThreatZone
@@ -28,6 +29,7 @@ class ArSafetyRenderer(
     private val onStateChanged: (SafetyUiState) -> Unit,
     private val onAlert: (AlertDecision) -> Unit,
     private val onFeedbackReset: () -> Unit,
+    private val onFrameForVlm: ((Frame) -> Unit)? = null,
 ) : GLSurfaceView.Renderer, AutoCloseable {
     private val obstacleEngine = ARCoreObstacleEngine()
     private val performance = PerformanceMonitor(context)
@@ -87,6 +89,9 @@ class ArSafetyRenderer(
                 }
             }
             emitUiState(reading, tracking = true, performanceStats = performanceStats)
+            // The ARCore session remains the only camera owner. The VLM callback is trigger-gated
+            // and copies the current frame before this render callback returns.
+            onFrameForVlm?.invoke(frame)
         } catch (_: CameraNotAvailableException) {
             resetFeedbackIfNeeded()
             onStateChanged(SafetyUiState.error("Camera unavailable. Reopen the safety view."))
@@ -117,6 +122,8 @@ class ArSafetyRenderer(
                 statusText = if (tracking) "Depth scanning" else "Finding tracking",
                 highestZone = reading.zone.takeUnless { it == ThreatZone.UNKNOWN } ?: ThreatZone.UNKNOWN,
                 reading = reading,
+                safety = SafetyFusion.fromDepth(reading),
+                depthStatus = if (reading.source == com.manus.spatialsafety.ar.safety.DistanceSource.UNAVAILABLE) "UNAVAILABLE" else "READY",
                 performance = performanceStats,
             ),
         )

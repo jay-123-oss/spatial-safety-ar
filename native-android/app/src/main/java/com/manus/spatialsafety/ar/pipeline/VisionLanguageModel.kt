@@ -65,8 +65,16 @@ class LocalSmolVlmClient(
     }
 }
 
-class MissingLocalModelRuntime : LocalVlmRuntime {
+/**
+ * Production-safe gate for the real local runtime. It never fabricates inference: until the
+ * official .litertlm bundle and LiteRT-LM Android runtime are packaged, initialization is false
+ * and the caller must use its safety fallback.
+ */
+class ArtifactGatedLocalVlmRuntime(
+    private val modelAssetName: String = "SmolVLM2-500M.litertlm",
+) : LocalVlmRuntime {
     override fun initialize(): Boolean = false
-    override suspend fun analyze(imageBytes: ByteArray, context: VlmInputContext): SmolVlmResult = VisualNavigationPrompt.SAFE_FALLBACK
+    override suspend fun analyze(imageBytes: ByteArray, context: VlmInputContext): SmolVlmResult =
+        error("Local model artifact unavailable: $modelAssetName")
     override fun release() = Unit
 }

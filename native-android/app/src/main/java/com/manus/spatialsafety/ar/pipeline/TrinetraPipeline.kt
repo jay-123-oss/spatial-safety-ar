@@ -538,4 +538,30 @@ object YuvRgbConverter {
         }
         return Bitmap.createBitmap(out, width, height, Bitmap.Config.ARGB_8888)
     }
+
+    fun convert(image: android.media.Image): Bitmap {
+        require(image.format == android.graphics.ImageFormat.YUV_420_888)
+        val width = image.width
+        val height = image.height
+        val yPlane = image.planes[0]
+        val uPlane = image.planes[1]
+        val vPlane = image.planes[2]
+        val y = yPlane.buffer.duplicate()
+        val u = uPlane.buffer.duplicate()
+        val v = vPlane.buffer.duplicate()
+        val out = IntArray(width * height)
+        for (row in 0 until height) for (col in 0 until width) {
+            val yi = row * yPlane.rowStride + col * yPlane.pixelStride
+            val ci = (row / 2) * uPlane.rowStride + (col / 2) * uPlane.pixelStride
+            val cj = (row / 2) * vPlane.rowStride + (col / 2) * vPlane.pixelStride
+            val yy = (y.get(yi).toInt() and 0xff) - 16
+            val uu = (u.get(ci).toInt() and 0xff) - 128
+            val vv = (v.get(cj).toInt() and 0xff) - 128
+            val r = (1.164f * yy + 1.596f * vv).toInt().coerceIn(0, 255)
+            val g = (1.164f * yy - 0.392f * uu - 0.813f * vv).toInt().coerceIn(0, 255)
+            val b = (1.164f * yy + 2.017f * uu).toInt().coerceIn(0, 255)
+            out[row * width + col] = android.graphics.Color.rgb(r, g, b)
+        }
+        return Bitmap.createBitmap(out, width, height, Bitmap.Config.ARGB_8888)
+    }
 }

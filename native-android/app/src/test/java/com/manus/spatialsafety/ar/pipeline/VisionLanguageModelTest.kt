@@ -9,7 +9,7 @@ import org.junit.Test
 class VisionLanguageModelTest {
     @Test
     fun missingLocalArtifactDoesNotCrashAndReportsDisabled() = runBlocking {
-        val engine = SmolVlmEngine(MissingLocalModelRuntime())
+        val engine = SmolVlmEngine(ArtifactGatedLocalVlmRuntime())
         assertFalse(engine.initialize())
         assertEquals(VlmState.DISABLED, engine.state)
         val result = engine.analyze(byteArrayOf(1), VlmInputContext(PerceptionContext()))

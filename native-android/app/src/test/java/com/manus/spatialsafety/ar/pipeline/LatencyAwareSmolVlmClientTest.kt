@@ -6,36 +6,36 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
-class LatencyAwareSmolVlmClientTest {
+class SafeLocalVlmClientTest {
     private val onlineResult = SmolVlmResult(
-        scene = "Indoor hallway",
-        importantObjects = emptyList(),
-        unknownObjects = emptyList(),
         pathStatus = "clear",
-        sceneChange = false,
+        hazard = "none",
+        position = "unknown",
         description = "The online VLM found no immediate obstacle.",
+        confidence = 0.9f,
         uncertainty = "low",
     )
 
     @Test
     fun fastOnlineResponseWinsWithinLatencyBudget() = runBlocking {
-        val client = LatencyAwareSmolVlmClient(FakeClient(onlineResult, 5), ArCoreDepthSensorFallback, { DepthSensorSnapshot(0.4f) }, 100)
+        val client = SafeLocalVlmClient(FakeClient(onlineResult, 5), ArCoreDepthSensorFallback, { DepthSensorSnapshot(0.4f, 0.8f) }, 100)
         assertEquals(onlineResult, client.analyzeJpeg(byteArrayOf(1)))
     }
 
     @Test
     fun slowOnlineResponseFallsBackToDepthSensor() = runBlocking {
-        val client = LatencyAwareSmolVlmClient(FakeClient(onlineResult, 250), ArCoreDepthSensorFallback, { DepthSensorSnapshot(0.4f) }, 30)
+        val client = SafeLocalVlmClient(FakeClient(onlineResult, 250), ArCoreDepthSensorFallback, { DepthSensorSnapshot(0.4f, 0.8f) }, 30)
         val result = client.analyzeJpeg(byteArrayOf(2))
         assertEquals("blocked", result.pathStatus)
+        assertEquals("obstacle", result.hazard)
         assertTrue(result.description.contains("obstacle"))
     }
 
     @Test
     fun unavailableDepthUsesConservativeFallback() = runBlocking {
-        val client = LatencyAwareSmolVlmClient(FakeClient(onlineResult, 250), ArCoreDepthSensorFallback, { DepthSensorSnapshot(null) }, 30)
+        val client = SafeLocalVlmClient(FakeClient(onlineResult, 250), ArCoreDepthSensorFallback, { DepthSensorSnapshot(null) }, 30)
         val result = client.analyzeJpeg(byteArrayOf(3))
-        assertEquals("AR depth sensor", result.scene)
+        assertEquals("unknown", result.hazard)
         assertEquals("high", result.uncertainty)
     }
 

@@ -193,6 +193,7 @@ open class MainActivity : ComponentActivity() {
                 onStateChanged = { state.value = it },
                 onAlert = alertController::playFeedback,
                 onFeedbackReset = alertController::cancelAllFeedback,
+                onFrameForVlm = { frame -> vlmPipeline?.submitArCoreFrame(frame) },
             )
         }.onSuccess { newRenderer ->
             renderer = newRenderer

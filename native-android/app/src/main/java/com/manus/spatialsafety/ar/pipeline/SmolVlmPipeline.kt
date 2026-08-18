@@ -53,43 +53,40 @@ object ArCoreDepthSensorFallback : DepthSensorFallback {
         val distance = snapshot.distanceMeters
         return when {
             distance == null || !distance.isFinite() -> VisualNavigationPrompt.SAFE_FALLBACK.copy(
-                scene = "AR depth sensor",
-                description = "The visual model is unavailable and depth is unavailable. The safety layer remains in control.",
+                description = "Visual model unavailable and depth is unavailable. The safety layer remains in control.",
             )
             distance <= 0.8f -> SmolVlmResult(
-                scene = "AR depth sensor",
-                importantObjects = listOf(VlmObject("nearby obstacle", 1f, "front", "depth candidate")),
-                unknownObjects = emptyList(), pathStatus = "blocked", sceneChange = false,
-                description = "A nearby obstacle is directly ahead at ${"%.1f".format(distance)} meters.", uncertainty = "low",
+                pathStatus = "blocked", hazard = "obstacle", position = "center",
+                description = "A nearby obstacle is directly ahead. Stop.", confidence = snapshot.confidence.coerceIn(0f, 1f),
+                uncertainty = "low",
             )
             distance <= 1.5f -> SmolVlmResult(
-                scene = "AR depth sensor",
-                importantObjects = listOf(VlmObject("obstacle", 1f, "front", "depth candidate")),
-                unknownObjects = emptyList(), pathStatus = "partially_blocked", sceneChange = false,
-                description = "A nearby obstacle is directly ahead at ${"%.1f".format(distance)} meters.", uncertainty = "medium",
+                pathStatus = "partially_blocked", hazard = "obstacle", position = "center",
+                description = "An obstacle is ahead. Proceed with caution.", confidence = snapshot.confidence.coerceIn(0f, 1f),
+                uncertainty = "medium",
             )
             else -> SmolVlmResult(
-                scene = "AR depth sensor", importantObjects = emptyList(), unknownObjects = emptyList(),
-                pathStatus = "clear", sceneChange = false,
-                description = "The immediate path is clear by depth sensing.", uncertainty = "medium",
+                pathStatus = "clear", hazard = "none", position = "unknown",
+                description = "The immediate path is clear by depth sensing.", confidence = snapshot.confidence.coerceIn(0f, 1f),
+                uncertainty = "medium",
             )
         }
     }
 }
 
-/** Uses online VLM only within the latency budget, then falls back to ARCore depth guidance. */
-class LatencyAwareSmolVlmClient(
-    private val online: SmolVlmClient,
+/** Uses the local VLM within a bounded inference budget, then falls back to ARCore depth guidance. */
+class SafeLocalVlmClient(
+    private val local: SmolVlmClient,
     private val fallback: DepthSensorFallback,
     private val snapshotProvider: () -> DepthSensorSnapshot,
     private val latencyBudgetMs: Long = 1_500L,
 ) : SmolVlmClient {
     override suspend fun analyzeJpeg(jpegBytes: ByteArray): SmolVlmResult {
         val onlineResult = withTimeoutOrNull(latencyBudgetMs.coerceAtLeast(100L)) {
-            runCatching { online.analyzeJpeg(jpegBytes) }.getOrNull()
+            runCatching { local.analyzeJpeg(jpegBytes) }.getOrNull()
         }
         if (onlineResult != null) return onlineResult
-        safeLogWarning("Online VLM exceeded ${latencyBudgetMs}ms or failed; switching to depth fallback")
+        safeLogWarning("Local VLM exceeded ${latencyBudgetMs}ms or failed; switching to depth fallback")
         return fallback.guidance(snapshotProvider())
     }
 }
@@ -118,20 +115,15 @@ class SmolVlmCameraAnalyzer(
     @Volatile private var activeJob: Job? = null
 
     override fun analyze(image: ImageProxy) {
-        val now = android.os.SystemClock.elapsedRealtime()
-        if (!shouldInvoke() || now - lastSubmittedAtMs < minIntervalMs || activeJob?.isActive == true) {
+        if (!claimFrame()) {
             image.close()
             return
         }
-        lastSubmittedAtMs = now
-        Log.d(VLM_TAG, "Submitting selected camera frame to SmolVLM2")
         activeJob = scope.launch(dispatcher) {
             mutex.withLock {
                 try {
                     val bitmap = YuvRgbConverter.convert(image)
-                    val jpeg = bitmap.toJpegBytes(jpegQuality, maxImageEdgePx)
-                    bitmap.recycle()
-                    onResult(client.analyzeJpeg(jpeg))
+                    submitBitmap(bitmap)
                 } catch (error: Exception) {
                     Log.e(VLM_TAG, "Camera frame could not be submitted to VLM", error)
                     onResult(VisualNavigationPrompt.SAFE_FALLBACK)
@@ -139,6 +131,50 @@ class SmolVlmCameraAnalyzer(
                     image.close()
                 }
             }
+        }
+    }
+
+    /** Copies the current ARCore camera image while ARCore owns the camera session. */
+    fun submitArCoreFrame(frame: com.google.ar.core.Frame) {
+        if (!claimFrame()) return
+        val image = try {
+            frame.acquireCameraImage()
+        } catch (error: Throwable) {
+            lastSubmittedAtMs = 0L
+            Log.w(VLM_TAG, "ARCore camera image unavailable for selected VLM trigger", error)
+            return
+        }
+        val bitmap = try {
+            YuvRgbConverter.convert(image)
+        } catch (error: Throwable) {
+            lastSubmittedAtMs = 0L
+            Log.e(VLM_TAG, "ARCore camera image conversion failed", error)
+            return
+        } finally {
+            image.close()
+        }
+        activeJob = scope.launch(dispatcher) {
+            mutex.withLock { submitBitmap(bitmap) }
+        }
+    }
+
+    private fun claimFrame(): Boolean {
+        val now = android.os.SystemClock.elapsedRealtime()
+        if (!shouldInvoke() || now - lastSubmittedAtMs < minIntervalMs || activeJob?.isActive == true) return false
+        lastSubmittedAtMs = now
+        Log.d(VLM_TAG, "Submitting selected AR frame to SmolVLM2")
+        return true
+    }
+
+    private suspend fun submitBitmap(bitmap: Bitmap) {
+        try {
+            val jpeg = bitmap.toJpegBytes(jpegQuality, maxImageEdgePx)
+            onResult(client.analyzeJpeg(jpeg))
+        } catch (error: Exception) {
+            Log.e(VLM_TAG, "Frame could not be submitted to VLM", error)
+            onResult(VisualNavigationPrompt.SAFE_FALLBACK)
+        } finally {
+            bitmap.recycle()
         }
     }
 
@@ -173,11 +209,11 @@ class SmolVlmNavigationPipeline(
     depthSnapshot: () -> DepthSensorSnapshot = { DepthSensorSnapshot() },
 ) : AutoCloseable {
     private val tts = com.manus.spatialsafety.ar.safety.NavigationTtsController(context)
-    private val localEngine: VisionLanguageModel = SmolVlmEngine(MissingLocalModelRuntime())
+    private val localEngine: VisionLanguageModel = SmolVlmEngine(ArtifactGatedLocalVlmRuntime())
     private val router = VlmRouter(config = config.triggerConfig)
     private val analyzer = SmolVlmCameraAnalyzer(
-        client = LatencyAwareSmolVlmClient(
-            online = LocalSmolVlmClient(localEngine) {
+        client = SafeLocalVlmClient(
+            local = LocalSmolVlmClient(localEngine) {
                 VlmInputContext(perception = perceptionContext())
             },
             fallback = ArCoreDepthSensorFallback,
@@ -198,6 +234,8 @@ class SmolVlmNavigationPipeline(
     )
     /** CameraX is intentionally not bound here: ARCore owns the camera session. */
     fun analyzer(): ImageAnalysis.Analyzer = analyzer
+
+    fun submitArCoreFrame(frame: com.google.ar.core.Frame) = analyzer.submitArCoreFrame(frame)
 
     override fun close() {
         analyzer.close()
