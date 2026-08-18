@@ -1,79 +1,79 @@
 package com.manus.spatialsafety.ar.pipeline
 
-import org.json.JSONArray
 import org.json.JSONException
 import org.json.JSONObject
 
-/** Strict response contract for the Trinetra visual cognition and navigation engine. */
-data class VisualNavigationHazard(
-    val objectName: String,
-    val position: String,
-)
-
-data class VisualNavigationResult(
+/** Exact five-field response emitted by SmolVLM2 for Trinetra navigation. */
+data class SmolVlmResult(
     val environment: String,
-    val pathStatus: PathStatus,
-    val hazardsDetected: List<VisualNavigationHazard>,
-    val textSigns: String,
-    val actionableGuidance: String,
+    val primaryHazard: String,
+    val hazardPosition: String,
+    val spatialReasoning: String,
+    val actionCommand: String,
 )
-
-enum class PathStatus {
-    CLEAR,
-    BLOCKED,
-    PARTIALLY_BLOCKED,
-    HAZARDOUS,
-}
 
 object VisualNavigationPrompt {
+    const val MODEL_ID = "HuggingFaceTB/SmolVLM2-2.2B-Instruct"
+
     const val SYSTEM_PROMPT: String = """
-You are the central Visual Cognition and Navigation Engine for Trinetra, an AI-powered assistive wearable for blind and visually impaired users. Analyze a first-person camera frame from chest or head level. Detect surface and floor hazards, dynamic obstacles, static path blockers, overhead hazards, and readable signs. Describe positions relative to the user's body using practical distances such as directly ahead, slightly to your left, on your immediate right, one step ahead, touching distance, or about two meters away. Never use compass directions or screen coordinates.
+[SYSTEM BOOT_SEQUENCE: TRINETRA VLM ENGINE]
+MODEL_AWARENESS: You are SmolVLM2, acting as the advanced visual-spatial reasoning core for 'Trinetra'. You are part of a hybrid edge-AI pipeline. You are only triggered when deterministic sensors (YOLO/ARCore) detect a complex, unknown, or high-risk situation.
 
-The user cannot see the image and receives your response through text-to-speech. Use empathetic, clear, physical-space language and avoid visual jargon. Every detected hazard MUST include a precise physical maneuver to bypass it. Never return a generic warning without a solution. Guidance must be TTS-ready.
+USER CONTEXT (CRITICAL): The user is completely blind. They rely entirely on your exact wording through an earpiece and they are using a white cane. They cannot see the image, colors, or gestures. Your words are their only eyes.
 
-OUTPUT CONSTRAINTS (CRITICAL): Return ONLY one valid JSON object. Do not add markdown fences, conversational text, greetings, or explanations. If nothing specific can be detected, return the safe fallback object below.
+ADVANCED GUIDANCE & NAVIGATION MECHANICS:
+1. Use the 3-step guidance formula: acknowledge the hazard, give the spatial fix, then give the next safe action.
+2. Use clock-face directions for angles, such as at your 2 o'clock or at 9 o'clock. Use exact steps for movement, such as 1 step left or 2 steps back. Never use vague terms such as over there, nearby, or soon.
+3. For uneven surfaces, stairs, or open drains, instruct the user to use their cane.
+4. Prioritize Level 1 immediate dangers (moving vehicles, open manholes, sudden drop-offs), then Level 2 static blockers (parked cars, poles, walls), then Level 3 overhead hazards (low branches, signboards).
 
-REQUIRED JSON SCHEMA:
+STRICT OUTPUT FORMAT (JSON ONLY): Analyze the image and output ONLY one valid JSON object. Do not include markdown tags, intro text, or outro text. The object must contain exactly these five fields:
 {
-  "environment": "Short description of the scene",
-  "path_status": "CLEAR | BLOCKED | PARTIALLY_BLOCKED | HAZARDOUS",
-  "hazards_detected": [{ "object": "Name of hazard or None", "position": "Exact relative position" }],
-  "text_signs": "Readable text or None",
-  "actionable_guidance": "Exact physical movement instruction for the blind user; TTS-ready"
+  "environment": "Maximum 3 words, such as Crowded intersection, Indoor hallway, or Uneven footpath",
+  "primary_hazard": "Most dangerous object blocking the path, or None",
+  "hazard_position": "Relative to the user, such as 1 meter dead ahead or touching distance on the right",
+  "spatial_reasoning": "Concise spatial explanation for the selected action",
+  "action_command": "Polite, extremely clear, actionable TTS command in at most 2 sentences"
 }
 
-SAFE FALLBACK:
-{
-  "environment": "Scene unclear",
-  "path_status": "HAZARDOUS",
-  "hazards_detected": [{ "object": "Unknown hazard", "position": "Directly ahead; position unclear" }],
-  "text_signs": "None",
-  "actionable_guidance": "Stop and remain in place. The scene is unclear. Sweep your cane slowly around you and wait for a clearer view before moving."
-}
+FEW-SHOT EXAMPLES:
+Example 1: A half-open glass door in an indoor office. Output environment Indoor office corridor; primary hazard Half-open glass door; hazard position 1 step ahead, blocking the right side of the path; explain that the left side is clear; instruct the user to take one step left, feel the frame, and walk straight.
+Example 2: A parked car blocks the pavement and a bike approaches from the front. Output environment Outdoor street; primary hazard Approaching bike and parked car; hazard position Car blocking ahead, bike approaching from 12 o'clock; explain that forward movement is dangerous; command the user to stop, take one step back, and wait.
+Example 3: The pavement ends at an open gutter. Output environment Pavement edge; primary hazard Open gutter and drop-off; hazard position Directly beneath your next step; explain that the user must stop and gauge the gap; instruct cane use before crossing.
+Example 4: The path is completely clear. Output environment Open walkway; primary hazard None; hazard position Not applicable; explain that there are no immediate obstacles; command the user to continue straight at a normal pace.
+
+If the response cannot be generated safely, return this exact fallback JSON:
+{"environment":"Unclear scene","primary_hazard":"Unknown hazard","hazard_position":"Directly ahead; position unclear","spatial_reasoning":"The camera response is unavailable or invalid, so movement cannot be confirmed safe.","action_command":"Stop immediately and remain in place. Sweep your cane slowly around you and wait for a clearer view."}
 """.trimIndent()
 
-    val SAFE_FALLBACK = VisualNavigationResult(
-        environment = "Scene unclear",
-        pathStatus = PathStatus.HAZARDOUS,
-        hazardsDetected = listOf(VisualNavigationHazard("Unknown hazard", "Directly ahead; position unclear")),
-        textSigns = "None",
-        actionableGuidance = "Stop and remain in place. The scene is unclear. Sweep your cane slowly around you and wait for a clearer view before moving.",
+    val SAFE_FALLBACK = SmolVlmResult(
+        environment = "Unclear scene",
+        primaryHazard = "Unknown hazard",
+        hazardPosition = "Directly ahead; position unclear",
+        spatialReasoning = "The camera response is unavailable or invalid, so movement cannot be confirmed safe.",
+        actionCommand = "Stop immediately and remain in place. Sweep your cane slowly around you and wait for a clearer view.",
     )
 
-    /** Parses only the required JSON object and never throws to a caller handling live frames. */
-    fun parse(raw: String): VisualNavigationResult {
+    private val requiredKeys = setOf(
+        "environment",
+        "primary_hazard",
+        "hazard_position",
+        "spatial_reasoning",
+        "action_command",
+    )
+
+    /** Strictly parses a model response and fails closed for any schema or content error. */
+    fun parse(raw: String): SmolVlmResult {
         return try {
             val json = JSONObject(raw)
-            val keys = json.keys().asSequence().toSet()
-            val required = setOf("environment", "path_status", "hazards_detected", "text_signs", "actionable_guidance")
-            if (keys != required) return SAFE_FALLBACK
-
-            val environment = json.getString("environment").trim().requireNonEmpty()
-            val pathStatus = PathStatus.valueOf(json.getString("path_status"))
-            val hazards = parseHazards(json.getJSONArray("hazards_detected"))
-            val textSigns = json.getString("text_signs").trim().requireNonEmpty()
-            val guidance = json.getString("actionable_guidance").trim().requireNonEmpty()
-            VisualNavigationResult(environment, pathStatus, hazards, textSigns, guidance)
+            if (json.keys().asSequence().toSet() != requiredKeys) return SAFE_FALLBACK
+            SmolVlmResult(
+                environment = json.getString("environment").trim().requireNonEmpty().requireMaxWords(3),
+                primaryHazard = json.getString("primary_hazard").trim().requireNonEmpty(),
+                hazardPosition = json.getString("hazard_position").trim().requireNonEmpty(),
+                spatialReasoning = json.getString("spatial_reasoning").trim().requireNonEmpty(),
+                actionCommand = json.getString("action_command").trim().requireNonEmpty().requireMaxSentences(2),
+            )
         } catch (_: JSONException) {
             SAFE_FALLBACK
         } catch (_: IllegalArgumentException) {
@@ -81,26 +81,19 @@ SAFE FALLBACK:
         }
     }
 
-    private fun parseHazards(array: JSONArray): List<VisualNavigationHazard> {
-        return buildList {
-            for (index in 0 until array.length()) {
-                val item = array.getJSONObject(index)
-                val keys = item.keys().asSequence().toSet()
-                if (keys != setOf("object", "position")) throw JSONException("Invalid hazard schema")
-                add(
-                    VisualNavigationHazard(
-                        objectName = item.getString("object").trim().requireNonEmpty(),
-                        position = item.getString("position").trim().requireNonEmpty(),
-                    ),
-                )
-            }
-        }
+    private fun String.requireNonEmpty(): String = also {
+        require(it.isNotEmpty()) { "Required model field is empty" }
     }
 
-    private fun String.requireNonEmpty(): String = also {
-        if (it.isEmpty()) throw IllegalArgumentException("Required value is empty")
+    private fun String.requireMaxWords(max: Int): String = also {
+        require(trim().split(Regex("\\s+")).size <= max) { "Field exceeds word limit" }
+    }
+
+    private fun String.requireMaxSentences(max: Int): String = also {
+        val sentenceCount = split(Regex("[.!?]+"), limit = 0).count { it.trim().isNotEmpty() }
+        require(sentenceCount <= max) { "Action command exceeds sentence limit" }
     }
 }
 
-/** Converts a parsed result into a single safe TTS utterance. */
-fun VisualNavigationResult.toTtsText(): String = actionableGuidance
+/** Only the action command is suitable for speech; spatial reasoning remains internal. */
+fun SmolVlmResult.toTtsText(): String = actionCommand

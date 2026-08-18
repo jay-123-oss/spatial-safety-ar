@@ -6,37 +6,30 @@ import org.junit.Test
 
 class VisualNavigationPromptTest {
     @Test
-    fun parsesRequiredStrictSchema() {
+    fun parsesExactFiveFieldSchema() {
         val result = VisualNavigationPrompt.parse(
             """
             {
               "environment":"Outdoor street",
-              "path_status":"HAZARDOUS",
-              "hazards_detected":[{"object":"Open manhole","position":"Directly ahead, about 2 steps away"}],
-              "text_signs":"None",
-              "actionable_guidance":"Stop immediately. Tap your cane to the right to find a safe path around it."
+              "primary_hazard":"Approaching bike",
+              "hazard_position":"From 12 o'clock, 2 meters ahead",
+              "spatial_reasoning":"The bike is moving toward the user, so forward movement is unsafe.",
+              "action_command":"Stop immediately. Take one step back and wait for the bike to pass."
             }
             """.trimIndent(),
         )
 
-        assertEquals(PathStatus.HAZARDOUS, result.pathStatus)
-        assertEquals("Open manhole", result.hazardsDetected.single().objectName)
-        assertTrue(result.actionableGuidance.contains("cane"))
-    }
-
-    @Test
-    fun malformedOrUnexpectedSchemaReturnsSafeFallback() {
-        val result = VisualNavigationPrompt.parse(
-            """{"environment":"Hallway","path_status":"CLEAR","hazards_detected":[],"text_signs":"None","actionable_guidance":"Continue straight","unexpected":"reject"}""",
-        )
-
-        assertEquals(VisualNavigationPrompt.SAFE_FALLBACK, result)
+        assertEquals("Outdoor street", result.environment)
+        assertEquals("Approaching bike", result.primaryHazard)
+        assertEquals("From 12 o'clock, 2 meters ahead", result.hazardPosition)
+        assertTrue(result.spatialReasoning.contains("unsafe"))
+        assertEquals("Stop immediately. Take one step back and wait for the bike to pass.", result.toTtsText())
     }
 
     @Test
     fun malformedJsonReturnsSafeFallback() {
         val result = VisualNavigationPrompt.parse(
-            "{\"environment\":\"Outdoor street\",\"path_status\":\"HAZARDOUS\"",
+            "{\"environment\":\"Outdoor street\",\"primary_hazard\":\"Bike\"",
         )
 
         assertEquals(VisualNavigationPrompt.SAFE_FALLBACK, result)
@@ -47,10 +40,10 @@ class VisualNavigationPromptTest {
         val result = VisualNavigationPrompt.parse(
             """
             {
-              "environment":"Indoor corridor",
-              "path_status":"CLEAR",
-              "hazards_detected":[],
-              "text_signs":"None"
+              "environment":"Indoor hallway",
+              "primary_hazard":"None",
+              "hazard_position":"Not applicable",
+              "action_command":"The path is clear. Continue walking straight."
             }
             """.trimIndent(),
         )
@@ -59,15 +52,16 @@ class VisualNavigationPromptTest {
     }
 
     @Test
-    fun missingHazardPositionReturnsSafeFallback() {
+    fun extraFieldReturnsSafeFallbackBecauseSchemaIsExact() {
         val result = VisualNavigationPrompt.parse(
             """
             {
-              "environment":"Busy street",
-              "path_status":"PARTIALLY_BLOCKED",
-              "hazards_detected":[{"object":"Parked scooter"}],
-              "text_signs":"None",
-              "actionable_guidance":"Move one step right and continue straight."
+              "environment":"Open walkway",
+              "primary_hazard":"None",
+              "hazard_position":"Not applicable",
+              "spatial_reasoning":"The path is clear.",
+              "action_command":"Continue walking straight.",
+              "path_status":"CLEAR"
             }
             """.trimIndent(),
         )
@@ -76,22 +70,20 @@ class VisualNavigationPromptTest {
     }
 
     @Test
-    fun invalidPathStatusFromSimulatedCameraFrameReturnsSafeFallback() {
-        // Simulates the raw model response received after an AR camera frame.
-        val simulatedCameraFrameResponse =
-            """{"environment":"Indoor hallway","path_status":"DANGER","hazards_detected":[],"text_signs":"None","actionable_guidance":"Stop and wait."}"""
-
-        val result = VisualNavigationPrompt.parse(simulatedCameraFrameResponse)
+    fun environmentOverThreeWordsReturnsSafeFallback() {
+        val result = VisualNavigationPrompt.parse(
+            """{"environment":"Busy outdoor city intersection","primary_hazard":"None","hazard_position":"Not applicable","spatial_reasoning":"The path is clear.","action_command":"Continue walking straight."}""",
+        )
 
         assertEquals(VisualNavigationPrompt.SAFE_FALLBACK, result)
-        assertEquals("Stop and remain in place. The scene is unclear. Sweep your cane slowly around you and wait for a clearer view before moving.", result.toTtsText())
     }
 
     @Test
-    fun exposesAllAllowedPathStatuses() {
-        assertEquals(
-            setOf("CLEAR", "BLOCKED", "PARTIALLY_BLOCKED", "HAZARDOUS"),
-            PathStatus.entries.map { it.name }.toSet(),
+    fun actionCommandOverTwoSentencesReturnsSafeFallback() {
+        val result = VisualNavigationPrompt.parse(
+            """{"environment":"Open walkway","primary_hazard":"None","hazard_position":"Not applicable","spatial_reasoning":"The path is clear.","action_command":"Stop. Turn left. Walk straight."}""",
         )
+
+        assertEquals(VisualNavigationPrompt.SAFE_FALLBACK, result)
     }
 }

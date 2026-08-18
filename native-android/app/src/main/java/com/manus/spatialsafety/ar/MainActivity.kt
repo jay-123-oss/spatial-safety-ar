@@ -26,11 +26,16 @@ import com.google.ar.core.exceptions.UnavailableArcoreNotInstalledException
 import com.google.ar.core.exceptions.UnavailableDeviceNotCompatibleException
 import com.google.ar.core.exceptions.UnavailableSdkTooOldException
 import com.google.ar.core.exceptions.UnavailableUserDeclinedInstallationException
+import com.manus.spatialsafety.BuildConfig
 import com.manus.spatialsafety.ar.ar.ArSafetyRenderer
+import com.manus.spatialsafety.ar.pipeline.SmolVlmConfig
+import com.manus.spatialsafety.ar.pipeline.SmolVlmNavigationPipeline
 import com.manus.spatialsafety.ar.safety.AlertController
+import com.manus.spatialsafety.ar.safety.ThreatZone
 import com.manus.spatialsafety.ar.ui.SafetyUiState
 import com.manus.spatialsafety.ar.ui.UIOverlayScreen
 import kotlinx.coroutines.flow.MutableStateFlow
+import androidx.lifecycle.lifecycleScope
 
 /**
  * Hosts the AR experience only after the device, ARCore service, camera permission, and renderer
@@ -42,6 +47,7 @@ class MainActivity : ComponentActivity() {
     private var glSurfaceView by mutableStateOf<GLSurfaceView?>(null)
     private var renderer: ArSafetyRenderer? = null
     private lateinit var alertController: AlertController
+    private var vlmPipeline: SmolVlmNavigationPipeline? = null
     private var session: Session? = null
     private var installRequested = false
 
@@ -55,6 +61,20 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         alertController = AlertController(applicationContext)
+        if (BuildConfig.SMOLVLM_ENDPOINT.isNotBlank()) {
+            vlmPipeline = SmolVlmNavigationPipeline(
+                context = applicationContext,
+                config = SmolVlmConfig(
+                    endpoint = BuildConfig.SMOLVLM_ENDPOINT,
+                    apiKey = BuildConfig.SMOLVLM_API_KEY.takeIf { it.isNotBlank() },
+                ),
+                scope = lifecycleScope,
+                shouldInvoke = {
+                    val zone = state.value.highestZone
+                    zone == ThreatZone.UNKNOWN || zone == ThreatZone.TURANT_RUKE
+                },
+            )
+        }
 
         setContent {
             val uiState by state.collectAsState()
@@ -140,6 +160,7 @@ class MainActivity : ComponentActivity() {
             renderer?.setSession(session ?: error("ARCore session was not created"))
             session?.resume()
             glSurfaceView?.onResume()
+            vlmPipeline?.bind(this)
         } catch (_: UnavailableArcoreNotInstalledException) {
             showStartupError("Google Play Services for AR is not installed.")
         } catch (_: UnavailableApkTooOldException) {
@@ -195,6 +216,8 @@ class MainActivity : ComponentActivity() {
         glSurfaceView?.onPause()
         renderer?.detachSession()
         renderer?.close()
+        vlmPipeline?.close()
+        vlmPipeline = null
         alertController.close()
         session?.close()
         session = null
