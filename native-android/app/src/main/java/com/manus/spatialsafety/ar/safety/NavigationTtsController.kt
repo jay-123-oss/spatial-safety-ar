@@ -1,33 +1,44 @@
 package com.manus.spatialsafety.ar.safety
 
 import android.content.Context
+import android.os.Handler
+import android.os.Looper
 import android.speech.tts.TextToSpeech
 import com.manus.spatialsafety.ar.pipeline.SmolVlmResult
 import java.util.Locale
 
-/** Owns spoken navigation output; spatial reasoning and other fields are never spoken. */
+/** Owns spoken navigation output; spatial reasoning and every other field remain silent. */
 class NavigationTtsController(context: Context) : AutoCloseable, TextToSpeech.OnInitListener {
+    private val mainHandler = Handler(Looper.getMainLooper())
     private val tts = TextToSpeech(context.applicationContext, this)
     @Volatile private var ready = false
 
     override fun onInit(status: Int) {
-        if (status == TextToSpeech.SUCCESS) {
-            tts.language = Locale.getDefault()
-            ready = true
+        if (status != TextToSpeech.SUCCESS) return
+        mainHandler.post {
+            val languageStatus = tts.setLanguage(Locale.getDefault())
+            ready = languageStatus != TextToSpeech.LANG_MISSING_DATA &&
+                languageStatus != TextToSpeech.LANG_NOT_SUPPORTED
         }
     }
 
+    /** Speaks only the validated five-field response's action_command. */
     fun speak(result: SmolVlmResult) {
-        if (!ready) return
-        tts.speak(result.actionCommand, TextToSpeech.QUEUE_FLUSH, null, UTTERANCE_ID)
+        mainHandler.post {
+            if (!ready) return@post
+            tts.speak(result.actionCommand, TextToSpeech.QUEUE_FLUSH, null, UTTERANCE_ID)
+        }
     }
 
     fun speakFallback() = speak(com.manus.spatialsafety.ar.pipeline.VisualNavigationPrompt.SAFE_FALLBACK)
 
     override fun close() {
         ready = false
-        tts.stop()
-        tts.shutdown()
+        mainHandler.post {
+            tts.stop()
+            tts.shutdown()
+        }
+        mainHandler.removeCallbacksAndMessages(null)
     }
 
     private companion object {

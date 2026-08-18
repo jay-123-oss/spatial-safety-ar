@@ -15,7 +15,7 @@ data class SmolVlmResult(
 object VisualNavigationPrompt {
     const val MODEL_ID = "HuggingFaceTB/SmolVLM2-2.2B-Instruct"
 
-    const val SYSTEM_PROMPT: String = """
+    val SYSTEM_PROMPT: String = """
 [SYSTEM BOOT_SEQUENCE: TRINETRA VLM ENGINE]
 MODEL_AWARENESS: You are SmolVLM2, acting as the advanced visual-spatial reasoning core for 'Trinetra'. You are part of a hybrid edge-AI pipeline. You are only triggered when deterministic sensors (YOLO/ARCore) detect a complex, unknown, or high-risk situation.
 
