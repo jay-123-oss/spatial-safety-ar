@@ -20,10 +20,26 @@ import java.net.URL
 import android.util.Base64
 
 /** Configuration for an OpenAI-compatible SmolVLM2 gateway. Keep credentials off-device when possible. */
+enum class SmolVlmQuantization(val wireName: String) {
+    INT4("int4"),
+    INT8("int8"),
+    FP16("fp16"),
+    AUTO("auto"),
+}
+
+data class SmolVlmMobileProfile(
+    val quantization: SmolVlmQuantization = SmolVlmQuantization.INT4,
+    val maxTokens: Int = 160,
+    val jpegQuality: Int = 65,
+    val maxImageEdgePx: Int = 768,
+    val frameIntervalMs: Long = 1_200L,
+)
+
 data class SmolVlmConfig(
     val endpoint: String,
     val apiKey: String? = null,
     val model: String = VisualNavigationPrompt.MODEL_ID,
+    val profile: SmolVlmMobileProfile = SmolVlmMobileProfile(),
     val connectTimeoutMs: Int = 5_000,
     val readTimeoutMs: Int = 20_000,
 )
@@ -49,7 +65,10 @@ class OpenAiCompatibleSmolVlmClient(
             val request = JSONObject()
                 .put("model", config.model)
                 .put("temperature", 0)
-                .put("max_tokens", 220)
+                .put("max_tokens", config.profile.maxTokens)
+                // The gateway must honor this provider-specific hint when loading SmolVLM2.
+                .put("quantization", config.profile.quantization.wireName)
+                .put("image_detail", "low")
                 .put("messages", JSONArray().put(
                     JSONObject()
                         .put("role", "user")
@@ -87,7 +106,9 @@ class SmolVlmCameraAnalyzer(
     private val dispatcher: CoroutineDispatcher = Dispatchers.IO,
     private val shouldInvoke: () -> Boolean,
     private val onResult: (SmolVlmResult) -> Unit,
-    private val minIntervalMs: Long = 1_000L,
+    private val minIntervalMs: Long = 1_200L,
+    private val jpegQuality: Int = 65,
+    private val maxImageEdgePx: Int = 768,
 ) : ImageAnalysis.Analyzer {
     private val mutex = Mutex()
     @Volatile private var lastSubmittedAtMs = 0L
@@ -104,7 +125,7 @@ class SmolVlmCameraAnalyzer(
             mutex.withLock {
                 try {
                     val bitmap = YuvRgbConverter.convert(image)
-                    val jpeg = bitmap.toJpegBytes()
+                    val jpeg = bitmap.toJpegBytes(jpegQuality, maxImageEdgePx)
                     bitmap.recycle()
                     onResult(client.analyzeJpeg(jpeg))
                 } catch (_: Exception) {
@@ -121,10 +142,21 @@ class SmolVlmCameraAnalyzer(
     }
 }
 
-private fun Bitmap.toJpegBytes(): ByteArray {
-    val output = ByteArrayOutputStream()
-    compress(Bitmap.CompressFormat.JPEG, 80, output)
-    return output.toByteArray()
+private fun Bitmap.toJpegBytes(quality: Int, maxEdgePx: Int): ByteArray {
+    val boundedQuality = quality.coerceIn(40, 90)
+    val boundedEdge = maxEdgePx.coerceAtLeast(256)
+    val scale = minOf(1f, boundedEdge.toFloat() / maxOf(width, height).toFloat())
+    val scaled = if (scale < 1f) {
+        Bitmap.createScaledBitmap(this, (width * scale).toInt(), (height * scale).toInt(), true)
+    } else this
+    return try {
+        ByteArrayOutputStream().use { output ->
+            scaled.compress(Bitmap.CompressFormat.JPEG, boundedQuality, output)
+            output.toByteArray()
+        }
+    } finally {
+        if (scaled !== this) scaled.recycle()
+    }
 }
 
 /** End-to-end coordinator for CameraX -> SmolVLM2 -> action_command TTS. */
@@ -140,6 +172,9 @@ class SmolVlmNavigationPipeline(
         scope = scope,
         shouldInvoke = shouldInvoke,
         onResult = tts::speak,
+        minIntervalMs = config.profile.frameIntervalMs,
+        jpegQuality = config.profile.jpegQuality,
+        maxImageEdgePx = config.profile.maxImageEdgePx,
     )
     private val camera = TrinetraCameraController(context, analyzer)
 

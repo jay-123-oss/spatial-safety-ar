@@ -25,6 +25,26 @@ class MockSmolVlmClient(
         }
         """
 
+        const val LOW_LIGHT_RESPONSE = """
+        {
+          "environment":"Dark corridor",
+          "primary_hazard":"Unknown obstacle",
+          "hazard_position":"Directly ahead, position uncertain",
+          "spatial_reasoning":"The scene is low light and object boundaries are unreliable, so forward movement cannot be confirmed safe.",
+          "action_command":"Stop immediately. Sweep your cane slowly ahead and wait for a clearer view before moving."
+        }
+        """
+
+        const val SUDDEN_OBSTACLE_RESPONSE = """
+        {
+          "environment":"Busy sidewalk",
+          "primary_hazard":"Moving cyclist",
+          "hazard_position":"At your 11 o'clock, one step ahead",
+          "spatial_reasoning":"A cyclist has entered the immediate trajectory, creating an urgent collision risk.",
+          "action_command":"Stop immediately. Take one step back and wait for the cyclist to pass."
+        }
+        """
+
         const val DEFAULT_CLEAR_RESPONSE = """
         {
           "environment":"Open walkway",
